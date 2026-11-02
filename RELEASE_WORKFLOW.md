@@ -1,6 +1,9 @@
 # 🔄 Flusso di Rilascio e Aggiornamenti Automatici per Memo
 
-Questo documento specifica il protocollo standard per aggiornare e distribuire **Memo** a tutti gli utenti.
+- **Repository GitHub Ufficiale**: [https://github.com/IC3NBERG/Memo](https://github.com/IC3NBERG/Memo)
+- **Target OS**: macOS (Apple Silicon arm64 — M1/M2/M3/M4)
+
+Questo documento specifica il protocollo standard per aggiornare e distribuire **Memo** a tutti gli utenti. Quando l'utente chiede modifiche future, seguire sempre questi passaggi.
 
 ## 📌 Come funziona il rilascio automatico
 
@@ -36,3 +39,4 @@ Quando si implementano modifiche o nuove funzionalità:
    - Non appena rilevano la nuova versione, la scaricheranno in background senza interrompere l'utente.
    - Mostreranno la notifica con il pulsante **"Riavvia e Aggiorna"**.
    - Con un click l'app si riavvierà con la nuova versione applicata.
+
