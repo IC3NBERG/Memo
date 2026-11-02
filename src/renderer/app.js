@@ -8,18 +8,40 @@
 
 const ICONS = window.MEMO_ICONS || {};
 
-// ─── Toast Notifiche ──────────────────────────────────────────
+// ─── Toast Notifiche (Anti-ridondanza & Debounce) ────────────
 const toastContainer = document.createElement('div');
 toastContainer.id = 'toast-container';
 document.body.appendChild(toastContainer);
 
+const recentToastMessages = new Map();
+
 function showToast(msg, type = 'info', duration = 3000) {
+  if (!msg) return;
+  const now = Date.now();
+  // Se un messaggio identico è stato mostrato negli ultimi 3.5 secondi, evita la ridondanza
+  if (recentToastMessages.has(msg) && (now - recentToastMessages.get(msg) < 3500)) {
+    return;
+  }
+  recentToastMessages.set(msg, now);
+
+  // Mantieni al massimo 2 toast simultanei a schermo
+  while (toastContainer.children.length >= 2) {
+    const oldest = toastContainer.firstElementChild;
+    if (oldest) oldest.remove();
+  }
+
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   const icon = type === 'success' ? ICONS.check : (type === 'error' ? ICONS.close : ICONS.sparkles);
   el.innerHTML = `<span class="memo-icon icon-sm">${icon || ''}</span><span>${msg}</span>`;
   toastContainer.appendChild(el);
-  setTimeout(() => el.remove(), duration);
+
+  setTimeout(() => {
+    el.classList.add('toast-exit');
+    setTimeout(() => {
+      if (el.parentNode) el.remove();
+    }, 250);
+  }, duration);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -37,6 +59,16 @@ function formatDuration(sec) {
   const s = Math.floor(sec % 60);
   if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatDateTime(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    const dateStr = d.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' });
+    const timeStr = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    return `${dateStr} · ${timeStr}`;
+  } catch { return ''; }
 }
 
 function formatDate(iso) {
@@ -114,6 +146,19 @@ const UI = {
   emptyIconSlot:       $('empty-icon-slot'),
   emptyRecIconSlot:    $('empty-rec-icon-slot'),
   btnEmptyNewRec:      $('btn-empty-new-rec'),
+  recordingView:       $('recording-view'),
+  recCenterTimer:      $('rec-center-timer'),
+  toggleCenterLive:    $('toggle-center-live'),
+  recLiveSparkIcon:    $('rec-live-spark-icon'),
+  recBatteryInfoIcon:  $('rec-battery-info-icon'),
+  liveTextContainer:   $('live-text-container'),
+  liveStreamText:      $('live-stream-text'),
+  liveOffHint:         $('live-off-hint'),
+  btnCenterPause:      $('btn-center-pause'),
+  centerPauseIconSlot: $('center-pause-icon-slot'),
+  centerPauseText:     $('center-pause-text'),
+  btnCenterStop:       $('btn-center-stop'),
+  centerStopIconSlot:  $('center-stop-icon-slot'),
   transcriptView:      $('transcript-view'),
 
   // Toolbar trascrizione
@@ -131,15 +176,11 @@ const UI = {
   iconMdSlot:          $('icon-md-slot'),
 
   // Barra controlli trascrizione
-  btnTranscribeLive:   $('btn-transcribe-live'),
-  iconLiveSlot:        $('icon-live-slot'),
-  liveTranscribeText:  $('live-transcribe-text'),
   btnTranscribeAfter:  $('btn-transcribe-after'),
+  btnTranscribeText:   $('btn-transcribe-text'),
   iconTranscribeSlot:  $('icon-transcribe-slot'),
   selectTranscribeMode:$('select-transcribe-mode'),
   iconTranslateSlot:   $('icon-translate-slot'),
-  liveIndicatorBadge:  $('live-indicator-badge'),
-  liveIndicatorText:   $('live-indicator-text'),
   transcribeProgress:  $('transcribe-progress'),
   transcribeProgressFill: $('transcribe-progress-fill'),
   transcribeProgressPct:  $('transcribe-progress-pct'),
@@ -226,13 +267,18 @@ function injectStaticIcons() {
   if (UI.emptyIconSlot) UI.emptyIconSlot.innerHTML = ICONS.audioWave;
   if (UI.emptyRecIconSlot) UI.emptyRecIconSlot.innerHTML = ICONS.mic;
 
+  // Icone vista registrazione centrale
+  if (UI.recLiveSparkIcon) UI.recLiveSparkIcon.innerHTML = ICONS.sparkles;
+  if (UI.recBatteryInfoIcon) UI.recBatteryInfoIcon.innerHTML = ICONS.info;
+  if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.pause;
+  if (UI.centerStopIconSlot) UI.centerStopIconSlot.innerHTML = ICONS.stop;
+
   if (UI.iconBackSlot) UI.iconBackSlot.innerHTML = ICONS.back;
   if (UI.iconClockSlot) UI.iconClockSlot.innerHTML = ICONS.clock;
   if (UI.iconCopySlot) UI.iconCopySlot.innerHTML = ICONS.copy;
   if (UI.iconTxtSlot) UI.iconTxtSlot.innerHTML = ICONS.download;
   if (UI.iconMdSlot) UI.iconMdSlot.innerHTML = ICONS.download;
 
-  if (UI.iconLiveSlot) UI.iconLiveSlot.innerHTML = ICONS.micLive;
   if (UI.iconTranscribeSlot) UI.iconTranscribeSlot.innerHTML = ICONS.sparkles;
   if (UI.iconTranslateSlot) UI.iconTranslateSlot.innerHTML = ICONS.translate;
 
@@ -361,6 +407,7 @@ function setupSearchControls() {
 // 4. REGISTRAZIONE & AUDIO PIPELINE
 // ══════════════════════════════════════════════════════════════
 function setupRecControls() {
+  // Controlli barra inferiore
   UI.btnRec.addEventListener('click', () => {
     if (!state.recording) startRecording();
   });
@@ -374,6 +421,36 @@ function setupRecControls() {
   UI.btnStop.addEventListener('click', () => {
     if (!state.recording) return;
     stopRecording();
+  });
+
+  // Controlli centrali durante la registrazione
+  UI.btnCenterPause?.addEventListener('click', () => {
+    if (!state.recording) return;
+    if (state.paused) resumeRecording();
+    else pauseRecording();
+  });
+
+  UI.btnCenterStop?.addEventListener('click', () => {
+    if (!state.recording) return;
+    stopRecording();
+  });
+
+  // Toggle Live al centro
+  UI.toggleCenterLive?.addEventListener('change', () => {
+    state.liveTranscriptionEnabled = UI.toggleCenterLive.checked;
+    if (state.liveTranscriptionEnabled) {
+      UI.liveTextContainer?.classList.remove('hidden');
+      UI.liveOffHint?.classList.add('hidden');
+      if (state.recording && !state.paused) {
+        startLiveTranscriptionLoop();
+      }
+      showToast('Trascrizione Live attiva', 'info', 2000);
+    } else {
+      clearInterval(state.liveChunkInterval);
+      UI.liveTextContainer?.classList.add('hidden');
+      UI.liveOffHint?.classList.remove('hidden');
+      showToast('Trascrizione Live disattivata (risparmio batteria)', 'info', 2000);
+    }
   });
 }
 
@@ -423,7 +500,25 @@ async function startRecording() {
     state.lastLiveChunkIndex = 0;
     state.liveTextAccumulated = '';
 
-    // Aggiorna UI
+    // Aggiorna UI: mostra la schermata di registrazione attiva al centro
+    UI.emptyState.classList.add('hidden');
+    UI.transcriptView.classList.add('hidden');
+    UI.recordingView.classList.remove('hidden');
+
+    if (UI.recCenterTimer) UI.recCenterTimer.textContent = '00:00:00';
+    if (UI.toggleCenterLive) UI.toggleCenterLive.checked = state.liveTranscriptionEnabled;
+    if (UI.centerPauseText) UI.centerPauseText.textContent = 'Pausa';
+    if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.pause;
+
+    if (state.liveTranscriptionEnabled) {
+      UI.liveTextContainer?.classList.remove('hidden');
+      UI.liveOffHint?.classList.add('hidden');
+      if (UI.liveStreamText) UI.liveStreamText.innerHTML = '<span class="live-placeholder-text">In ascolto della voce…</span>';
+    } else {
+      UI.liveTextContainer?.classList.add('hidden');
+      UI.liveOffHint?.classList.remove('hidden');
+    }
+
     UI.btnRec.classList.add('recording');
     UI.btnPause.disabled = false;
     UI.btnStop.disabled = false;
@@ -492,6 +587,10 @@ function pauseRecording() {
     UI.iconPauseSlot.innerHTML = ICONS.play;
     UI.btnPause.title = 'Riprendi registrazione';
     UI.btnRec.classList.remove('recording');
+
+    if (UI.centerPauseText) UI.centerPauseText.textContent = 'Riprendi';
+    if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.play;
+
     showToast('Registrazione in pausa', 'info', 1500);
   }
 }
@@ -507,6 +606,10 @@ function resumeRecording() {
     UI.iconPauseSlot.innerHTML = ICONS.pause;
     UI.btnPause.title = 'Metti in pausa';
     UI.btnRec.classList.add('recording');
+
+    if (UI.centerPauseText) UI.centerPauseText.textContent = 'Pausa';
+    if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.pause;
+
     showToast('Registrazione ripresa', 'info', 1500);
   }
 }
@@ -522,7 +625,10 @@ function stopRecording() {
     UI.btnPause.disabled = true;
     UI.btnStop.disabled = true;
     UI.iconPauseSlot.innerHTML = ICONS.pause;
-    UI.liveIndicatorBadge.classList.add('hidden');
+    if (UI.centerPauseText) UI.centerPauseText.textContent = 'Pausa';
+    if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.pause;
+
+    UI.recordingView?.classList.add('hidden');
 
     if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
       state.mediaRecorder.onstop = async () => {
@@ -681,8 +787,9 @@ function startTimer() {
     const h = Math.floor(state.recDuration / 3600);
     const m = Math.floor((state.recDuration % 3600) / 60);
     const s = state.recDuration % 60;
-    UI.recTimer.textContent =
-      `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    const timeStr = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    if (UI.recTimer) UI.recTimer.textContent = timeStr;
+    if (UI.recCenterTimer) UI.recCenterTimer.textContent = timeStr;
   }, 1000);
 }
 
@@ -759,50 +866,34 @@ function drawWaveform() {
 // 5. TRASCRIZIONE & TRASCRIZIONE LIVE
 // ══════════════════════════════════════════════════════════════
 function setupTranscriptControls() {
-  // Toggle Trascrizione Live
-  UI.btnTranscribeLive.addEventListener('click', () => {
-    state.liveTranscriptionEnabled = !state.liveTranscriptionEnabled;
-    UI.btnTranscribeLive.classList.toggle('active', state.liveTranscriptionEnabled);
-    if (state.liveTranscriptionEnabled) {
-      showToast('Trascrizione Live ATTIVA durante la registrazione', 'success', 3000);
-      if (state.recording && !state.paused) {
-        startLiveTranscriptionLoop();
-      }
-    } else {
-      clearInterval(state.liveChunkInterval);
-      UI.liveIndicatorBadge.classList.add('hidden');
-      showToast('Trascrizione Live disattivata', 'info', 2000);
-    }
-  });
-
-  // Trascrizione post-registrazione
-  UI.btnTranscribeAfter.addEventListener('click', () => {
+  // Trascrizione nota attiva
+  UI.btnTranscribeAfter?.addEventListener('click', () => {
     if (!state.activeRec) return;
     if (!state.modelReady) {
       showToast('Attendere: modello Whisper in caricamento...', 'info', 3000);
       return;
     }
-    const mode = UI.selectTranscribeMode.value; // 'transcribe' | 'translate'
+    const mode = UI.selectTranscribeMode?.value || 'transcribe'; // 'transcribe' | 'translate'
     startTranscription(state.activeRec, mode === 'translate');
   });
 
-  UI.toggleTimestamps.addEventListener('change', () => {
+  UI.toggleTimestamps?.addEventListener('change', () => {
     state.showTimestamps = UI.toggleTimestamps.checked;
     renderTranscript();
   });
 
-  UI.btnCopyAll.addEventListener('click', () => {
-    const text = UI.transcriptContent.innerText.trim();
+  UI.btnCopyAll?.addEventListener('click', () => {
+    const text = UI.transcriptContent?.innerText.trim();
     if (!text) { showToast('Nessun testo da copiare', 'info', 1500); return; }
     navigator.clipboard.writeText(text).then(() => showToast('Testo copiato negli appunti!', 'success', 1500));
   });
 
-  UI.btnExportTxt.addEventListener('click', () => exportTranscript('txt'));
-  UI.btnExportMd.addEventListener('click', () => exportTranscript('md'));
+  UI.btnExportTxt?.addEventListener('click', () => exportTranscript('txt'));
+  UI.btnExportMd?.addEventListener('click', () => exportTranscript('md'));
 
   // Auto-salvataggio testo modificato
   let saveTimeout;
-  UI.transcriptContent.addEventListener('input', () => {
+  UI.transcriptContent?.addEventListener('input', () => {
     clearTimeout(saveTimeout);
     saveTimeout = setTimeout(() => saveTranscript(), 1500);
   });
@@ -812,9 +903,7 @@ function setupTranscriptControls() {
 function startLiveTranscriptionLoop() {
   clearInterval(state.liveChunkInterval);
 
-  UI.liveIndicatorBadge.classList.remove('hidden');
-  const isTranslate = UI.selectTranscribeMode.value === 'translate';
-  UI.liveIndicatorText.textContent = isTranslate ? 'Traduzione Live in corso…' : 'Trascrizione Live in corso…';
+  const isTranslate = UI.selectTranscribeMode?.value === 'translate';
 
   state.liveChunkInterval = setInterval(async () => {
     if (!state.recording || state.paused || state.audioChunks.length === 0) return;
@@ -834,8 +923,15 @@ function startLiveTranscriptionLoop() {
 
       if (res.success && res.text) {
         state.liveTextAccumulated = res.text;
+
+        // Aggiorna anteprima live al centro della schermata di registrazione
+        if (UI.liveStreamText) {
+          UI.liveStreamText.textContent = res.text;
+          UI.liveStreamText.scrollTop = UI.liveStreamText.scrollHeight;
+        }
+
         // Se la vista trascrizione è aperta, aggiorna subito il testo a video!
-        if (state.activeRec || !UI.transcriptView.classList.contains('hidden')) {
+        if (UI.transcriptContent && (state.activeRec || !UI.transcriptView.classList.contains('hidden'))) {
           UI.transcriptContent.textContent = res.text;
         }
       }
@@ -1089,29 +1185,32 @@ function createRecordingElement(rec, folderName) {
 
   const nameEl = document.createElement('div');
   nameEl.className = 'rec-item-name';
-  nameEl.textContent = rec.name || rec.dirName;
+  const displayName = rec.name || rec.dirName;
+  nameEl.textContent = displayName;
+  nameEl.title = displayName; // Tooltip sul nome intero se compresso
 
   const meta = document.createElement('div');
   meta.className = 'rec-item-meta';
 
-  const badge = document.createElement('span');
-  badge.className = `rec-badge-tag ${rec.hasTranscript ? 'badge-transcript' : 'badge-audio'}`;
-  badge.textContent = rec.hasTranscript ? 'Testo' : 'Audio';
-  meta.appendChild(badge);
+  const dateTimeStr = formatDateTime(rec.date);
+  if (dateTimeStr) {
+    const dtSpan = document.createElement('span');
+    dtSpan.className = 'rec-meta-date';
+    dtSpan.textContent = dateTimeStr;
+    meta.appendChild(dtSpan);
+  }
 
-  const parts = [];
-  if (rec.date) parts.push(formatDate(rec.date));
-  if (rec.duration) parts.push(formatDuration(rec.duration));
-  if (parts.length > 0) {
-    const textSpan = document.createElement('span');
-    textSpan.textContent = parts.join(' · ');
-    meta.appendChild(textSpan);
+  if (rec.duration) {
+    const durSpan = document.createElement('span');
+    durSpan.className = 'rec-meta-dur';
+    durSpan.textContent = (dateTimeStr ? '· ' : '') + formatDuration(rec.duration);
+    meta.appendChild(durSpan);
   }
 
   info.appendChild(nameEl);
   info.appendChild(meta);
 
-  // Azioni su registrazione
+  // Azioni su registrazione (posizionate in overlay assoluto per preservare dimensioni fisse)
   const actions = document.createElement('div');
   actions.className = 'rec-item-actions';
 
@@ -1145,9 +1244,15 @@ function createRecordingElement(rec, folderName) {
 async function openRecording(rec, folderName) {
   state.activeRec = rec;
 
-  // Mostra vista nota e nascondi empty state
+  // Mostra vista nota e nascondi altre viste
   UI.emptyState.classList.add('hidden');
+  UI.recordingView?.classList.add('hidden');
   UI.transcriptView.classList.remove('hidden');
+
+  // Aggiorna stato pulsante trascrivi
+  if (UI.btnTranscribeText) {
+    UI.btnTranscribeText.textContent = rec.hasTranscript ? 'Ritrascrivi' : 'Trascrivi';
+  }
 
   // Breadcrumb
   const displayFolder = rec.folder || folderName || 'Non categorizzate';

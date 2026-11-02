@@ -77,7 +77,7 @@
 
       <div id="sidebar-footer">
         <div class="footer-row">
-          <span class="app-version" id="app-version-label">Memo v1.0.2</span>
+          <span class="app-version" id="app-version-label">Memo v1.0.3</span>
           <button id="btn-check-updates" class="btn-secondary btn-xs" title="Controlla aggiornamenti">
             <span class="btn-icon" id="icon-update-slot"></span>
             <span>Update</span>
@@ -101,6 +101,81 @@
             <span class="btn-icon" id="empty-rec-icon-slot"></span>
             <span>Nuova Registrazione</span>
           </button>
+        </div>
+      </div>
+
+      <!-- Vista registrazione attiva al centro -->
+      <div id="recording-view" class="center-placeholder hidden">
+        <div class="active-rec-card">
+          <div class="rec-status-header">
+            <div class="rec-pulse-badge">
+              <span class="pulse-ring"></span>
+              <span class="pulse-core"></span>
+              <span>REGISTRAZIONE IN CORSO</span>
+            </div>
+            <span class="rec-quality-badge">16 kHz · WAV PCM</span>
+          </div>
+
+          <div class="rec-timer-display" id="rec-center-timer">00:00:00</div>
+
+          <!-- Visualizzatore audio centrale ad onda viva -->
+          <div class="rec-center-waveform">
+            <div class="rec-live-bars" id="rec-live-bars">
+              <span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+          </div>
+
+          <!-- Sezione Toggle Trascrizione Live -->
+          <div class="live-toggle-card">
+            <div class="live-toggle-row">
+              <div class="live-toggle-label-wrap">
+                <div class="live-toggle-title">
+                  <span class="btn-icon" id="rec-live-spark-icon"></span>
+                  <strong>Trascrizione Live in diretta</strong>
+                </div>
+                <div class="live-battery-warning">
+                  <span class="btn-icon" id="rec-battery-info-icon"></span>
+                  <span>Consuma maggiore batteria (inferenza continua GPU Metal)</span>
+                </div>
+              </div>
+              <label class="switch-toggle" title="Attiva o disattiva la trascrizione live in diretta">
+                <input type="checkbox" id="toggle-center-live" />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <!-- Box testo in diretta (visibile quando toggle è ON) -->
+            <div id="live-text-container" class="live-text-container hidden">
+              <div class="live-text-header">
+                <span class="live-dot-pulse"></span>
+                <span>Testo in tempo reale:</span>
+              </div>
+              <div id="live-stream-text" class="live-stream-text">
+                <span class="live-placeholder-text">In ascolto della voce…</span>
+              </div>
+            </div>
+
+            <!-- Hint a basso consumo quando toggle è OFF -->
+            <div id="live-off-hint" class="live-off-hint">
+              <span>Risparmio energetico attivo: la trascrizione verrà elaborata al termine della registrazione con la massima accuratezza.</span>
+            </div>
+          </div>
+
+          <!-- Controlli rapidi al centro -->
+          <div class="rec-center-actions">
+            <button id="btn-center-pause" class="btn-secondary btn-md">
+              <span class="btn-icon" id="center-pause-icon-slot"></span>
+              <span id="center-pause-text">Pausa</span>
+            </button>
+            <button id="btn-center-stop" class="btn-primary btn-md">
+              <span class="btn-icon" id="center-stop-icon-slot"></span>
+              <span>Termina e Salva</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -146,13 +221,9 @@
         <!-- Bottoni e stato trascrizione -->
         <div id="transcribe-bar">
           <div id="transcribe-buttons">
-            <button id="btn-transcribe-live" class="btn-transcribe" title="Attiva/disattiva trascrizione live in tempo reale durante la registrazione">
-              <span class="btn-icon" id="icon-live-slot"></span>
-              <span id="live-transcribe-text">Trascrivi Live</span>
-            </button>
-            <button id="btn-transcribe-after" class="btn-transcribe" title="Trascrivi l'intera registrazione">
+            <button id="btn-transcribe-after" class="btn-transcribe btn-transcribe-main" title="Trascrivi l'intera registrazione">
               <span class="btn-icon" id="icon-transcribe-slot"></span>
-              <span>Trascrivi</span>
+              <span id="btn-transcribe-text">Trascrivi</span>
             </button>
             <div class="transcribe-mode-select">
               <label for="select-transcribe-mode" class="mode-label">
