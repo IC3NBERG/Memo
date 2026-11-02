@@ -52,11 +52,16 @@
     <!-- SIDEBAR -->
     <aside id="sidebar">
       <div id="sidebar-header">
-        <span class="sidebar-title">Libreria</span>
-        <button id="btn-new-folder" class="btn-new-folder" title="Nuova materia">
-          <span class="btn-icon" id="icon-new-folder-slot"></span>
-          <span>Materia</span>
-        </button>
+        <span class="sidebar-title">Gruppi</span>
+        <div class="sidebar-header-actions">
+          <button id="btn-info" class="btn-sidebar-icon" title="Guida & Architettura di Memo (i)">
+            <span class="btn-icon" id="icon-info-slot"></span>
+          </button>
+          <button id="btn-new-folder" class="btn-new-folder" title="Nuovo gruppo">
+            <span class="btn-icon" id="icon-new-folder-slot"></span>
+            <span>Gruppo</span>
+          </button>
+        </div>
       </div>
 
       <!-- Barra di ricerca rapida -->
@@ -72,7 +77,7 @@
 
       <div id="sidebar-footer">
         <div class="footer-row">
-          <span class="app-version" id="app-version-label">Memo v1.0.0</span>
+          <span class="app-version" id="app-version-label">Memo v1.0.2</span>
           <button id="btn-check-updates" class="btn-secondary btn-xs" title="Controlla aggiornamenti">
             <span class="btn-icon" id="icon-update-slot"></span>
             <span>Update</span>
@@ -109,7 +114,7 @@
               <span>Chiudi</span>
             </button>
             <div class="transcript-breadcrumb">
-              <span id="breadcrumb-folder" class="bc-folder">Materia</span>
+              <span id="breadcrumb-folder" class="bc-folder">Gruppo</span>
               <span class="bc-sep">/</span>
               <span id="rec-name-label" class="rec-title" contenteditable="false" title="Doppio click per rinominare"></span>
             </div>
@@ -249,17 +254,17 @@
 
   <!-- ── MODALI ──────────────────────────────────────────────── -->
 
-  <!-- Modal: nuova materia -->
+  <!-- Modal: nuovo gruppo -->
   <div id="modal-folder" class="modal-overlay hidden">
     <div class="modal">
       <div class="modal-header">
         <span class="modal-icon-header" id="modal-newfolder-icon-slot"></span>
-        <h3>Nuova Materia</h3>
+        <h3>Nuovo Gruppo</h3>
       </div>
-      <input type="text" id="input-folder-name" placeholder="Es. Analisi Matematica, Diritto Privato..." maxlength="50" />
+      <input type="text" id="input-folder-name" placeholder="Es. Diritto Privato, Biologia, Lavoro..." maxlength="50" />
       <div class="modal-actions">
         <button id="btn-folder-cancel" class="btn-secondary">Annulla</button>
-        <button id="btn-folder-confirm" class="btn-primary">Crea Materia</button>
+        <button id="btn-folder-confirm" class="btn-primary">Crea Gruppo</button>
       </div>
     </div>
   </div>
@@ -302,14 +307,126 @@
       </div>
       <input type="text" id="input-rec-name" placeholder="Es. Lezione 5 – Derivate parziali" maxlength="60" />
       <div class="modal-folder-select">
-        <label>Materia:</label>
+        <label>Gruppo:</label>
         <select id="select-rec-folder">
-          <option value="">— Non categorizzata —</option>
+          <option value="">— Nessun gruppo —</option>
         </select>
       </div>
       <div class="modal-actions">
         <button id="btn-save-cancel" class="btn-secondary">Annulla</button>
         <button id="btn-save-confirm" class="btn-primary">Salva Nota</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Guida & Architettura (i) -->
+  <div id="modal-info" class="modal-overlay hidden">
+    <div class="modal modal-info">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="modal-icon-header" id="modal-info-icon-slot"></span>
+          <div>
+            <h3>Guida & Architettura di Memo</h3>
+            <span class="modal-subtitle">Funzionamento, preprocessing audio e tecnologie integrate</span>
+          </div>
+        </div>
+        <button id="btn-info-close" class="btn-modal-close" title="Chiudi (Esc)">✕</button>
+      </div>
+
+      <div class="modal-info-body">
+        <!-- 1. Processo di Registrazione & Trascrizione -->
+        <div class="info-section">
+          <div class="info-section-title">
+            <span class="info-sec-icon" id="info-mic-icon-slot"></span>
+            <h4>Processo di Registrazione & Trascrizione</h4>
+          </div>
+          <div class="info-card-grid">
+            <div class="info-card">
+              <strong>Cattura Audio 16 kHz Float32</strong>
+              <p>L'audio viene acquisito dal microfono a 16.000 Hz mono in formato WAV PCM lineare, frequenza nativa ottimale dei modelli neurali Whisper che evita artefatti di ricampionamento.</p>
+            </div>
+            <div class="info-card">
+              <strong>Forma d'Onda Realtime</strong>
+              <p>Un analizzatore FFT dedicato elabora lo spettro sonoro a 60 fps per visualizzare visivamente la presenza della voce del docente e il livello di gain.</p>
+            </div>
+            <div class="info-card">
+              <strong>Trascrizione Live</strong>
+              <p>Attivando "Live", Memo campiona intervalli audio ed esegue Whisper Metal in background, generando un'anteprima del testo trascritta in tempo reale durante la lezione.</p>
+            </div>
+            <div class="info-card">
+              <strong>Trascrizione Post-Lezione</strong>
+              <p>Al termine, l'intera traccia audio viene decodificata con massima accuratezza, formattazione a paragrafi, punteggiatura e timestamp temporali precisi.</p>
+            </div>
+            <div class="info-card full-width">
+              <strong>Traduzione Automatica ("Traduci in Inglese")</strong>
+              <p>Sfrutta la decodifica multilingua avanzata di Whisper: lezioni e conferenze tenute in italiano, spagnolo, francese o tedesco possono essere tradotte direttamente in inglese fluente senza passaggi cloud intermedi.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. I 4 Toggle di Preprocessing Audio -->
+        <div class="info-section">
+          <div class="info-section-title">
+            <span class="info-sec-icon" id="info-sliders-icon-slot"></span>
+            <h4>I 4 Toggle di Preprocessing Audio</h4>
+          </div>
+          <div class="info-card-grid">
+            <div class="info-card">
+              <div class="info-toggle-header">
+                <span class="badge-toggle">Passa-alto (80 Hz)</span>
+              </div>
+              <p>Elimina le frequenze ultra-basse: rimuove i rimbombi sordi causati dalle vibrazioni della cattedra, colpi accidentali, passi in aula e il rombo continuo di condizionatori e proiettori.</p>
+            </div>
+            <div class="info-card">
+              <div class="info-toggle-header">
+                <span class="badge-toggle">Noise Gate (-45 dB)</span>
+              </div>
+              <p>Silenzia automaticamente l'audio quando il livello sonoro scende sotto la soglia minima del parlato, cancellando il fruscio continuo dell'ambiente e i respiri durante le pause.</p>
+            </div>
+            <div class="info-card">
+              <div class="info-toggle-header">
+                <span class="badge-toggle">Compressore Dinamico</span>
+              </div>
+              <p>Livella l'escursione dinamica: rende perfettamente comprensibili le parole pronunciate a bassa voce ed evita che toni acuti o esclamazioni saturino il microfono.</p>
+            </div>
+            <div class="info-card">
+              <div class="info-toggle-header">
+                <span class="badge-toggle">Auto-Gain (AGC)</span>
+              </div>
+              <p>Regola automaticamente il guadagno medio: se il docente si sposta nell'aula o parla a distanza variabile dal microfono, il volume vocale rimane sempre uniforme.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Componenti & Tecnologie del Software -->
+        <div class="info-section">
+          <div class="info-section-title">
+            <span class="info-sec-icon" id="info-cpu-icon-slot"></span>
+            <h4>Componenti & Tecnologie Software</h4>
+          </div>
+          <div class="info-card-grid">
+            <div class="info-card">
+              <strong>Whisper.cpp (Apple Silicon Metal)</strong>
+              <p>Implementazione nativa C++ per chip arm64. Sfrutta l'accelerazione Metal e la memoria unificata GPU Apple con calcolo FP16, garantendo fino a 6x real-time con consumo energetico ridotto.</p>
+            </div>
+            <div class="info-card">
+              <strong>Modello GGML Large-v3 Turbo (1.5 GB)</strong>
+              <p>809 milioni di parametri con 4 decoder layers: conserva l'eccellente precisione lessicale per terminologie universitarie complesse con velocità moltiplicata rispetto al modello standard.</p>
+            </div>
+            <div class="info-card">
+              <strong>100% Privacy & Offline</strong>
+              <p>Tutti i file audio, note e trascrizioni restano confinati in locale in <code>~/MemoRecordings/</code>. Nessun dato lascia il Mac e non è richiesta alcuna connessione a server terzi.</p>
+            </div>
+            <div class="info-card">
+              <strong>Electron 34 + Web Audio API</strong>
+              <p>Architettura a processi isolati (sandbox + contextIsolation) con pipeline DSP nativa a bassissima latenza per una gestione audio professionale e un'interfaccia a 60 fps.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="btn-info-ok" class="btn-primary">Ho Capito</button>
       </div>
     </div>
   </div>

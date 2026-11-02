@@ -97,6 +97,8 @@ const UI = {
   btnUpdateDismiss:    $('btn-update-dismiss'),
 
   // Sidebar
+  btnInfo:             $('btn-info'),
+  iconInfoSlot:        $('icon-info-slot'),
   btnNewFolder:        $('btn-new-folder'),
   iconNewFolderSlot:   $('icon-new-folder-slot'),
   searchInput:         $('search-input'),
@@ -199,6 +201,14 @@ const UI = {
   selectRecFolder:     $('select-rec-folder'),
   btnSaveCancel:       $('btn-save-cancel'),
   btnSaveConfirm:      $('btn-save-confirm'),
+
+  modalInfo:           $('modal-info'),
+  modalInfoIconSlot:   $('modal-info-icon-slot'),
+  infoMicIconSlot:     $('info-mic-icon-slot'),
+  infoSlidersIconSlot: $('info-sliders-icon-slot'),
+  infoCpuIconSlot:     $('info-cpu-icon-slot'),
+  btnInfoClose:        $('btn-info-close'),
+  btnInfoOk:           $('btn-info-ok'),
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -208,6 +218,7 @@ function injectStaticIcons() {
   if (UI.brandIconSlot) UI.brandIconSlot.innerHTML = ICONS.mic;
   if (UI.modelIconSlot) UI.modelIconSlot.innerHTML = ICONS.cpu;
   if (UI.updateIconSlot) UI.updateIconSlot.innerHTML = ICONS.sparkles;
+  if (UI.iconInfoSlot) UI.iconInfoSlot.innerHTML = ICONS.info;
   if (UI.iconNewFolderSlot) UI.iconNewFolderSlot.innerHTML = ICONS.folderPlus;
   if (UI.searchIconSlot) UI.searchIconSlot.innerHTML = ICONS.search;
   if (UI.iconUpdateSlot) UI.iconUpdateSlot.innerHTML = ICONS.refresh;
@@ -238,6 +249,11 @@ function injectStaticIcons() {
   if (UI.modalMoveIconSlot) UI.modalMoveIconSlot.innerHTML = ICONS.move;
   if (UI.modalTrashIconSlot) UI.modalTrashIconSlot.innerHTML = ICONS.trash;
   if (UI.modalRecIconSlot) UI.modalRecIconSlot.innerHTML = ICONS.mic;
+
+  if (UI.modalInfoIconSlot) UI.modalInfoIconSlot.innerHTML = ICONS.info;
+  if (UI.infoMicIconSlot) UI.infoMicIconSlot.innerHTML = ICONS.mic;
+  if (UI.infoSlidersIconSlot) UI.infoSlidersIconSlot.innerHTML = ICONS.sliders;
+  if (UI.infoCpuIconSlot) UI.infoCpuIconSlot.innerHTML = ICONS.cpu;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1016,13 +1032,13 @@ function createFolderElement(folder, autoExpand = false) {
 
     const renameBtn = document.createElement('button');
     renameBtn.className = 'folder-action-btn';
-    renameBtn.title = 'Rinomina materia';
+    renameBtn.title = 'Rinomina gruppo';
     renameBtn.innerHTML = ICONS.edit;
     renameBtn.onclick = (e) => { e.stopPropagation(); renameFolder(folder.name); };
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'folder-action-btn danger';
-    deleteBtn.title = 'Elimina materia';
+    deleteBtn.title = 'Elimina gruppo';
     deleteBtn.innerHTML = ICONS.trash;
     deleteBtn.onclick = (e) => { e.stopPropagation(); deleteFolder(folder.name); };
 
@@ -1101,7 +1117,7 @@ function createRecordingElement(rec, folderName) {
 
   const moveBtn = document.createElement('button');
   moveBtn.className = 'rec-action-btn';
-  moveBtn.title = 'Sposta in altra materia';
+  moveBtn.title = 'Sposta in un altro gruppo';
   moveBtn.innerHTML = ICONS.move;
   moveBtn.onclick = (e) => { e.stopPropagation(); showMoveModal(rec); };
 
@@ -1221,7 +1237,7 @@ function showPlayerOrWaveform(which) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 9. MODALI & OPERAZIONI MATERIA
+// 9. MODALI & OPERAZIONI GRUPPI
 // ══════════════════════════════════════════════════════════════
 function setupModalHandlers() {
   UI.btnNewFolder.addEventListener('click', () => {
@@ -1237,14 +1253,26 @@ function setupModalHandlers() {
     const result = await window.memoAPI.folderCreate({ name });
     UI.modalFolder.classList.add('hidden');
     if (result.success) {
-      showToast(`Materia "${result.name}" creata`, 'success', 2000);
+      showToast(`Gruppo "${result.name}" creato`, 'success', 2000);
       await refreshLibrary();
     } else {
       showToast(result.error, 'error', 3000);
     }
   });
 
-  [UI.modalFolder, UI.modalMove, UI.modalConfirm, UI.modalSaveName].forEach(modal => {
+  // Modal Guida & Architettura (i)
+  UI.btnInfo?.addEventListener('click', () => {
+    UI.modalInfo?.classList.remove('hidden');
+  });
+  UI.btnInfoClose?.addEventListener('click', () => {
+    UI.modalInfo?.classList.add('hidden');
+  });
+  UI.btnInfoOk?.addEventListener('click', () => {
+    UI.modalInfo?.classList.add('hidden');
+  });
+
+  [UI.modalFolder, UI.modalMove, UI.modalConfirm, UI.modalSaveName, UI.modalInfo].forEach(modal => {
+    if (!modal) return;
     modal.addEventListener('click', (e) => {
       if (e.target === modal) modal.classList.add('hidden');
     });
@@ -1252,11 +1280,11 @@ function setupModalHandlers() {
 }
 
 async function renameFolder(oldName) {
-  const newName = prompt(`Nuovo nome per "${oldName}":`, oldName);
+  const newName = prompt(`Nuovo nome per il gruppo "${oldName}":`, oldName);
   if (!newName || newName === oldName) return;
   const result = await window.memoAPI.folderRename({ oldName, newName });
   if (result.success) {
-    showToast(`Rinominata in "${result.name}"`, 'success', 2000);
+    showToast(`Gruppo rinominato in "${result.name}"`, 'success', 2000);
     await refreshLibrary();
   } else {
     showToast(result.error, 'error', 3000);
@@ -1265,12 +1293,12 @@ async function renameFolder(oldName) {
 
 function deleteFolder(name) {
   showConfirmModal(
-    `Elimina materia "${name}"`,
+    `Elimina gruppo "${name}"`,
     `Le registrazioni contenute saranno spostate in "Non categorizzate". Vuoi continuare?`,
     async () => {
       const result = await window.memoAPI.folderDelete({ name });
       if (result.success) {
-        showToast('Materia eliminata', 'success', 2000);
+        showToast('Gruppo eliminato', 'success', 2000);
         await refreshLibrary();
       } else {
         showToast(result.error, 'error', 3000);
@@ -1435,9 +1463,15 @@ function setupUpdaterControls() {
 
   UI.btnCheckUpdates?.addEventListener('click', async () => {
     showToast('Ricerca aggiornamenti...', 'info', 2000);
-    const res = await window.memoAPI.checkForUpdates();
-    if (!res.success && res.message) {
-      showToast(res.message, 'info', 3000);
+    try {
+      const res = await window.memoAPI.checkForUpdates();
+      if (!res.success && res.message) {
+        showToast(res.message, 'info', 3000);
+      } else if (!res.success && res.error) {
+        showToast(`Verifica: ${res.error}`, 'error', 3500);
+      }
+    } catch (e) {
+      showToast(`Errore: ${e.message}`, 'error', 3500);
     }
   });
 
@@ -1450,6 +1484,7 @@ function setupUpdaterControls() {
   });
 
   window.memoAPI.onUpdateStatus((info) => {
+    if (!info) return;
     if (info.type === 'available') {
       UI.updateBanner?.classList.remove('hidden');
       if (UI.updateBannerText) UI.updateBannerText.textContent = info.message;
@@ -1461,7 +1496,9 @@ function setupUpdaterControls() {
       if (UI.btnUpdateAction) UI.btnUpdateAction.classList.remove('hidden');
       showToast('Aggiornamento pronto! Clicca "Riavvia e Aggiorna"', 'success', 6000);
     } else if (info.type === 'not-available') {
-      showToast('Memo è già aggiornato', 'success', 2500);
+      showToast('Memo è già aggiornato all\'ultima versione', 'success', 2500);
+    } else if (info.type === 'error') {
+      showToast(`Aggiornamenti: ${info.message}`, 'error', 3500);
     }
   });
 
