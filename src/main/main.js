@@ -32,7 +32,6 @@ function getModelPath() {
   return primary;
 }
 
-const MODEL_PATH = getModelPath();
 const MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin';
 
 // Percorso al binario whisper-cli (dentro l'app oppure nella dir di sviluppo)
@@ -41,6 +40,30 @@ function getWhisperBinPath() {
     return path.join(process.resourcesPath, 'bin', 'whisper-cli');
   }
   return path.join(__dirname, '..', '..', 'bin', 'whisper-cli');
+}
+
+// ─── Validazione percorsi IPC ──────────────────────────────────────────────
+// Il renderer non deve poter leggere/scrivere/eliminare percorsi arbitrari.
+function isPathInsideRecordings(targetPath) {
+  if (!targetPath || typeof targetPath !== 'string') return false;
+  const resolved = path.resolve(targetPath);
+  const root = path.resolve(RECORDINGS_DIR);
+  return resolved.startsWith(root + path.sep);
+}
+
+function isSafeFolderName(name) {
+  return typeof name === 'string'
+    && name.length > 0
+    && name.length <= 80
+    && name !== '.'
+    && name !== '..'
+    && !name.startsWith('.')
+    && !name.includes('/')
+    && !name.includes('\\');
+}
+
+function isValidRecordingDir(recDir) {
+  return isPathInsideRecordings(recDir) && fs.existsSync(recDir);
 }
 
 // ─── Crea directory necessarie ─────────────────────────────────────────────
@@ -270,6 +293,10 @@ ipcMain.on('model:download', (event) => {
 // ─── IPC: Salva audio WAV (Anti-sovrascrittura garantita) ───────────────────
 ipcMain.handle('recording:save', async (event, { buffer, folder, name }) => {
   try {
+    if (folder && !isSafeFolderName(folder)) {
+      return { success: false, error: 'Gruppo non valido' };
+    }
+
     const date = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -314,6 +341,9 @@ ipcMain.handle('recording:save', async (event, { buffer, folder, name }) => {
 // ─── IPC: Aggiorna durata registrazione ───────────────────────────────────
 ipcMain.handle('recording:update-duration', (event, { recDir, duration }) => {
   try {
+    if (!isValidRecordingDir(recDir)) {
+      return { success: false, error: 'Registrazione non valida' };
+    }
     const metaPath = path.join(recDir, 'metadata.json');
     if (fs.existsSync(metaPath)) {
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
@@ -327,10 +357,24 @@ ipcMain.handle('recording:update-duration', (event, { recDir, duration }) => {
 });
 
 // ─── IPC: Trascrizione Integrale Completa & Traduzione ──────────────────────
+let activeTranscription = null;
+
 ipcMain.on('transcription:start', (event, { audioPath, recDir, language, translate }) => {
+  if (activeTranscription) {
+    event.sender.send('transcription:error', 'Una trascrizione è già in corso. Attendi che termini.');
+    return;
+  }
+
+  if (!isValidRecordingDir(recDir) ||
+      !audioPath ||
+      !path.resolve(audioPath).startsWith(path.resolve(recDir) + path.sep)) {
+    event.sender.send('transcription:error', 'Percorso audio non valido.');
+    return;
+  }
+
   const currentModelPath = getModelPath();
   if (!fs.existsSync(currentModelPath)) {
-    event.sender.send('transcription:error', 'Modello Whisper non trovato in ~/.CrunchRecordings/.models.');
+    event.sender.send('transcription:error', 'Modello Whisper non trovato in ~/CrunchRecordings/.models.');
     return;
   }
 
@@ -360,16 +404,15 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
     '--print-progress',
     '--file', audioPath,
     '--threads', '4',
+    '--language', language || 'auto',
   ];
 
   if (translate) {
-    args.push('--language', language || 'it');
     args.push('--translate');
-  } else {
-    args.push('--language', language || 'it');
   }
 
   const proc = spawn(whisperBin, args);
+  activeTranscription = proc;
 
   const handleOutput = (data) => {
     const line = data.toString();
@@ -389,6 +432,7 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
   proc.stdout.on('data', handleOutput);
 
   proc.on('close', (code) => {
+    activeTranscription = null;
     if (code !== 0) {
       event.sender.send('transcription:error', `whisper-cli terminato con errore (codice ${code})`);
       return;
@@ -427,13 +471,18 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
         fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
       }
 
-      event.sender.send('transcription:done', transcript);
+      event.sender.send('transcription:done', {
+        recDir,
+        transcript,
+        translate: !!translate,
+      });
     } catch (err) {
       event.sender.send('transcription:error', err.message);
     }
   });
 
   proc.on('error', (err) => {
+    activeTranscription = null;
     event.sender.send('transcription:error', err.message);
   });
 });
@@ -463,13 +512,11 @@ ipcMain.handle('transcription:chunk', async (event, { buffer, language, translat
       '--no-timestamps',
       '--file', tmpWav,
       '--threads', '4',
+      '--language', language || 'auto',
     ];
 
     if (translate) {
-      args.push('--language', language || 'it');
       args.push('--translate');
-    } else {
-      args.push('--language', language || 'it');
     }
 
     return new Promise((resolve) => {
@@ -550,27 +597,72 @@ function getRecordingsInDir(dir, folderName) {
     .map(e => {
       const recDir = path.join(dir, e.name);
       const metaPath = path.join(recDir, 'metadata.json');
-      const meta = fs.existsSync(metaPath)
-        ? JSON.parse(fs.readFileSync(metaPath, 'utf8'))
-        : { name: e.name, date: null, duration: 0, hasTranscript: false };
+      let meta;
+      try {
+        meta = fs.existsSync(metaPath)
+          ? JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+          : { name: e.name, date: null, duration: 0, hasTranscript: false };
+      } catch (_) {
+        // Metadata corrotto: non bloccare l'intera libreria
+        meta = { name: e.name, date: null, duration: 0, hasTranscript: false };
+      }
+
+      // Testo della trascrizione per la ricerca full-text nella sidebar
+      let searchText = '';
+      const txtPath = path.join(recDir, 'transcript.txt');
+      if (fs.existsSync(txtPath)) {
+        try { searchText = fs.readFileSync(txtPath, 'utf8'); } catch (_) {}
+      }
+
+      // Recupera anche le anteprime live salvate prima dell'allineamento
+      // dei flag nel metadata
+      if (searchText && !meta.hasTranscript) {
+        meta.hasTranscript = true;
+      }
 
       return {
+        ...meta,
         id: recDir,
         dirName: e.name,
         recDir,
         audioPath: path.join(recDir, 'audio.wav'),
+        // La posizione reale sul filesystem è la fonte di verità, non il metadata
         folder: folderName,
-        ...meta,
+        searchText,
       };
     })
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+}
+
+// Aggiorna il campo folder del metadata dopo uno spostamento/rinomina
+function updateMetadataFolder(recDir, folder) {
+  const metaPath = path.join(recDir, 'metadata.json');
+  if (!fs.existsSync(metaPath)) return;
+  try {
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    meta.folder = folder;
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  } catch (_) {}
+}
+
+// Restituisce un percorso libero, evitando di sovrascrivere cartelle esistenti
+function uniqueDestinationPath(baseDir, dirName) {
+  let candidate = path.join(baseDir, dirName);
+  let counter = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(baseDir, `${dirName}_${counter}`);
+    counter++;
+  }
+  return candidate;
 }
 
 // ─── IPC: Crea cartella ────────────────────────────────────────────────────
 ipcMain.handle('folder:create', (event, { name }) => {
   try {
     const safeName = name.replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim();
-    if (!safeName) return { success: false, error: 'Nome non valido' };
+    if (!isSafeFolderName(safeName) || safeName === '_unsorted') {
+      return { success: false, error: 'Nome non valido' };
+    }
     const folderPath = path.join(RECORDINGS_DIR, safeName);
     if (fs.existsSync(folderPath)) return { success: false, error: 'Gruppo già esistente' };
     fs.mkdirSync(folderPath, { recursive: true });
@@ -584,11 +676,23 @@ ipcMain.handle('folder:create', (event, { name }) => {
 ipcMain.handle('folder:rename', (event, { oldName, newName }) => {
   try {
     const safeName = newName.replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim();
-    if (!safeName) return { success: false, error: 'Nome non valido' };
+    if (!isSafeFolderName(safeName) || safeName === '_unsorted') {
+      return { success: false, error: 'Nome non valido' };
+    }
+    if (!isSafeFolderName(oldName) || oldName === '_unsorted') {
+      return { success: false, error: 'Gruppo non valido' };
+    }
     const oldPath = path.join(RECORDINGS_DIR, oldName);
     const newPath = path.join(RECORDINGS_DIR, safeName);
+    if (!fs.existsSync(oldPath)) return { success: false, error: 'Gruppo non trovato' };
     if (fs.existsSync(newPath)) return { success: false, error: 'Nome già in uso' };
     fs.renameSync(oldPath, newPath);
+
+    // Allinea il metadata dei file alla nuova posizione
+    for (const rec of getRecordingsInDir(newPath, safeName)) {
+      updateMetadataFolder(rec.recDir, safeName);
+    }
+
     return { success: true, name: safeName };
   } catch (err) {
     return { success: false, error: err.message };
@@ -598,20 +702,45 @@ ipcMain.handle('folder:rename', (event, { oldName, newName }) => {
 // ─── IPC: Elimina cartella ─────────────────────────────────────────────────
 ipcMain.handle('folder:delete', (event, { name }) => {
   try {
+    if (!isSafeFolderName(name) || name === '_unsorted') {
+      return { success: false, error: 'Gruppo non valido' };
+    }
     const folderPath = path.join(RECORDINGS_DIR, name);
+    if (!fs.existsSync(folderPath)) return { success: false, error: 'Gruppo non trovato' };
+
+    // Verifica PRIMA di spostare: se ci sono file non gestiti ci fermiamo,
+    // così il gruppo resta intatto e l'utente può controllarlo.
+    const unmanaged = fs.readdirSync(folderPath, { withFileTypes: true })
+      .filter(e => !e.isDirectory() && e.name !== '.DS_Store');
+    if (unmanaged.length > 0) {
+      return {
+        success: false,
+        error: 'Il gruppo contiene file non gestiti: nessuna registrazione è stata spostata.',
+      };
+    }
+
+    // Sposta tutte le registrazioni in _unsorted, senza mai sovrascrivere
     const recordings = getRecordingsInDir(folderPath, name);
-
-    // Sposta i file in _unsorted
     for (const rec of recordings) {
-      const dest = path.join(UNSORTED_DIR, rec.dirName);
-      if (!fs.existsSync(dest)) {
-        fs.renameSync(rec.recDir, dest);
-      }
+      const dest = uniqueDestinationPath(UNSORTED_DIR, rec.dirName);
+      fs.renameSync(rec.recDir, dest);
+      updateMetadataFolder(dest, null);
     }
 
-    if (fs.existsSync(folderPath)) {
-      fs.rmdirSync(folderPath, { recursive: true });
+    // Elimina il gruppo solo se è rimasto vuoto (a parte .DS_Store).
+    // In caso di file non previsti non cancelliamo nulla: meglio un gruppo
+    // vuoto che perdere registrazioni.
+    const leftovers = fs.readdirSync(folderPath).filter(n => n !== '.DS_Store');
+    if (leftovers.length > 0) {
+      return {
+        success: false,
+        error: 'Il gruppo contiene file non gestiti: nessun file è stato eliminato.',
+      };
     }
+
+    const dsStore = path.join(folderPath, '.DS_Store');
+    if (fs.existsSync(dsStore)) fs.unlinkSync(dsStore);
+    fs.rmdirSync(folderPath);
 
     return { success: true };
   } catch (err) {
@@ -622,13 +751,23 @@ ipcMain.handle('folder:delete', (event, { name }) => {
 // ─── IPC: Sposta registrazione ─────────────────────────────────────────────
 ipcMain.handle('recording:move', (event, { recDir, targetFolder }) => {
   try {
+    if (!isValidRecordingDir(recDir)) {
+      return { success: false, error: 'Registrazione non valida' };
+    }
+    if (targetFolder && !isSafeFolderName(targetFolder)) {
+      return { success: false, error: 'Gruppo non valido' };
+    }
     const dirName = path.basename(recDir);
     const destBase = targetFolder ? path.join(RECORDINGS_DIR, targetFolder) : UNSORTED_DIR;
-    const destPath = path.join(destBase, dirName);
 
     if (!fs.existsSync(destBase)) fs.mkdirSync(destBase, { recursive: true });
-    fs.renameSync(recDir, destPath);
 
+    // Spostamento nella stessa posizione: evita di creare un duplicato "_1"
+    let destPath = path.join(destBase, dirName);
+    if (path.resolve(destPath) !== path.resolve(recDir)) {
+      destPath = uniqueDestinationPath(destBase, dirName);
+      fs.renameSync(recDir, destPath);
+    }
     const metaPath = path.join(destPath, 'metadata.json');
     if (fs.existsSync(metaPath)) {
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
@@ -645,6 +784,9 @@ ipcMain.handle('recording:move', (event, { recDir, targetFolder }) => {
 // ─── IPC: Rinomina registrazione ───────────────────────────────────────────
 ipcMain.handle('recording:rename', (event, { recDir, newName }) => {
   try {
+    if (!isValidRecordingDir(recDir)) {
+      return { success: false, error: 'Registrazione non valida' };
+    }
     const safeName = newName.replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim();
     if (!safeName) return { success: false, error: 'Nome non valido' };
     const metaPath = path.join(recDir, 'metadata.json');
@@ -662,6 +804,9 @@ ipcMain.handle('recording:rename', (event, { recDir, newName }) => {
 // ─── IPC: Elimina registrazione ────────────────────────────────────────────
 ipcMain.handle('recording:delete', (event, { recDir }) => {
   try {
+    if (!isValidRecordingDir(recDir)) {
+      return { success: false, error: 'Registrazione non valida' };
+    }
     fs.rmSync(recDir, { recursive: true, force: true });
     return { success: true };
   } catch (err) {
@@ -672,6 +817,9 @@ ipcMain.handle('recording:delete', (event, { recDir }) => {
 // ─── IPC: Leggi trascrizione ───────────────────────────────────────────────
 ipcMain.handle('transcript:read', (event, { recDir }) => {
   try {
+    if (!isValidRecordingDir(recDir)) {
+      return { success: false, error: 'Registrazione non valida' };
+    }
     const jsonPath = path.join(recDir, 'transcript.json');
     if (fs.existsSync(jsonPath)) {
       return { success: true, transcript: JSON.parse(fs.readFileSync(jsonPath, 'utf8')) };
@@ -683,10 +831,30 @@ ipcMain.handle('transcript:read', (event, { recDir }) => {
 });
 
 // ─── IPC: Salva trascrizione editata ──────────────────────────────────────
-ipcMain.handle('transcript:save', (event, { recDir, transcript }) => {
+ipcMain.handle('transcript:save', (event, { recDir, transcript, isLivePreview, isTranslated }) => {
   try {
+    if (!isValidRecordingDir(recDir)) {
+      return { success: false, error: 'Registrazione non valida' };
+    }
     fs.writeFileSync(path.join(recDir, 'transcript.json'), JSON.stringify(transcript, null, 2));
     fs.writeFileSync(path.join(recDir, 'transcript.txt'), transcript.text || '');
+
+    // Allinea i flag del metadata: senza questo, un'anteprima live
+    // scomparirebbe dalla libreria al riavvio dell'app.
+    const metaPath = path.join(recDir, 'metadata.json');
+    if (fs.existsSync(metaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        meta.hasTranscript = true;
+        if (isLivePreview === true) {
+          meta.isLivePreview = true;
+          meta.isCompleteTranscript = false;
+          if (typeof isTranslated === 'boolean') meta.isTranslated = isTranslated;
+        }
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+      } catch (_) {}
+    }
+
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -696,6 +864,9 @@ ipcMain.handle('transcript:save', (event, { recDir, transcript }) => {
 // ─── IPC: Export ──────────────────────────────────────────────────────────
 ipcMain.handle('transcript:export', async (event, { recDir, format, text }) => {
   try {
+    if (!isValidRecordingDir(recDir)) {
+      return { success: false, error: 'Registrazione non valida' };
+    }
     const meta = JSON.parse(fs.readFileSync(path.join(recDir, 'metadata.json'), 'utf8'));
     const ext = format === 'md' ? '.md' : '.txt';
     const defaultName = `${meta.name || 'trascrizione'}${ext}`;
@@ -724,6 +895,9 @@ ipcMain.handle('transcript:export', async (event, { recDir, format, text }) => {
 
 // ─── IPC: Ottieni percorso audio (per riproduzione) ───────────────────────
 ipcMain.handle('audio:get-path', (event, { recDir }) => {
+  if (!isValidRecordingDir(recDir)) {
+    return { success: false, error: 'Registrazione non valida' };
+  }
   const audioPath = path.join(recDir, 'audio.wav');
   if (fs.existsSync(audioPath)) {
     return { success: true, audioPath: 'file://' + audioPath };

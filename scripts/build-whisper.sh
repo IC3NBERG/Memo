@@ -15,15 +15,20 @@ echo "🔨 Compilazione whisper.cpp con Metal per arm64..."
 
 # Clona whisper.cpp se non esiste
 WHISPER_DIR="/tmp/whisper.cpp"
+# Commit verificato con Crunch 1.0.5: evita che un aggiornamento upstream
+# rompa la build di release.
+WHISPER_REF="${WHISPER_REF:-482279b8a18855ba741d7b88c30fcb3874691f59}"
+
 if [ ! -d "$WHISPER_DIR" ]; then
   echo "📥 Clonazione whisper.cpp..."
   git clone https://github.com/ggerganov/whisper.cpp.git "$WHISPER_DIR"
 else
   echo "✅ whisper.cpp già scaricato, aggiornamento..."
-  cd "$WHISPER_DIR" && git pull
+  cd "$WHISPER_DIR" && git fetch origin
 fi
 
 cd "$WHISPER_DIR"
+git checkout "$WHISPER_REF"
 
 echo "⚙️  Build con Metal (GPU M4)..."
 cmake -B build \

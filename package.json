@@ -1,6 +1,6 @@
 {
   "name": "crunch",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Registrazione e trascrizione audio per lezioni universitarie con accelerazione Metal",
   "main": "src/main/main.js",
   "scripts": {
@@ -32,7 +32,8 @@
       {
         "provider": "github",
         "owner": "IC3NBERG",
-        "repo": "Memo"
+        "repo": "Memo",
+        "releaseType": "release"
       }
     ],
     "mac": {
@@ -52,7 +53,6 @@
         }
       ],
       "icon": "assets/icons/icon.icns",
-      "identity": null,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Crunch ha bisogno del microfono per registrare le lezioni."
       }

@@ -34,7 +34,10 @@ function showToast(msg, type = 'info', duration = 3000) {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   const icon = type === 'success' ? ICONS.check : (type === 'error' ? ICONS.close : ICONS.sparkles);
-  el.innerHTML = `<span class="memo-icon icon-sm">${icon || ''}</span><span>${msg}</span>`;
+  el.innerHTML = `<span class="memo-icon icon-sm">${icon || ''}</span>`;
+  const textEl = document.createElement('span');
+  textEl.textContent = msg;
+  el.appendChild(textEl);
   toastContainer.appendChild(el);
 
   setTimeout(() => {
@@ -96,17 +99,26 @@ const state = {
   analyserNode: null,
   compressorNode: null,
   highpassNode: null,
+  noiseGateNode: null,
+  noiseGateAnalyser: null,
+  noiseGateInterval: null,
   streamSource: null,
   micStream: null,
   modelReady: false,
   showTimestamps: false,
   playerAudio: document.getElementById('hidden-audio'),
 
-  // Trascrizione Live istantanea
+  // Trascrizione Live istantanea (chunk PCM reali, non tutto l'audio accumulato)
   liveTranscriptionEnabled: false,
   liveChunkInterval: null,
-  lastLiveChunkIndex: 0,
   liveTextAccumulated: '',
+  liveTextTranslated: false,
+  liveSampleBuffer: [],
+  liveSampleRate: 16000,
+  liveProcessorNode: null,
+  liveSilentGain: null,
+  liveTranscribing: false,
+  transcriptionTranslate: false,
 };
 
 // ─── Elementi DOM ─────────────────────────────────────────────
@@ -370,7 +382,12 @@ function setupKeyboardNavigation() {
     if (e.key === 'Escape') {
       const openModal = document.querySelector('.modal-overlay:not(.hidden)');
       if (openModal) {
-        openModal.classList.add('hidden');
+        if (openModal === UI.modalSaveName) {
+          // Non chiudere silenziosamente: chiedi conferma prima di scartare
+          UI.btnSaveCancel?.click();
+        } else {
+          openModal.classList.add('hidden');
+        }
         return;
       }
       if (state.activeRec && !state.recording) {
@@ -433,6 +450,8 @@ function setupRecControls() {
       showToast('Trascrizione Live attiva', 'info', 2000);
     } else {
       clearInterval(state.liveChunkInterval);
+      state.liveChunkInterval = null;
+      state.liveSampleBuffer = [];
       UI.liveTextContainer?.classList.add('hidden');
       UI.liveOffHint?.classList.remove('hidden');
       showToast('Trascrizione Live disattivata (risparmio batteria)', 'info', 2000);
@@ -460,6 +479,10 @@ async function startRecording() {
     // Pipeline audio avanzata
     const chain = buildAudioPipeline(source);
 
+    // Cattura PCM separata per i chunk live: evita di ri-decodificare
+    // l'intera registrazione a ogni intervallo.
+    setupLiveAudioCapture(chain);
+
     // Analyser per Waveform
     state.analyserNode = state.audioContext.createAnalyser();
     state.analyserNode.fftSize = 256;
@@ -483,8 +506,10 @@ async function startRecording() {
     state.recording = true;
     state.paused = false;
     state.recDuration = 0;
-    state.lastLiveChunkIndex = 0;
+    state.liveSampleBuffer = [];
     state.liveTextAccumulated = '';
+    state.liveTextTranslated = false;
+    state.liveTranscribing = false;
 
     // Mostra la vista centrale di registrazione
     UI.emptyState.classList.add('hidden');
@@ -518,6 +543,16 @@ async function startRecording() {
 
     showToast('Registrazione avviata', 'info', 1500);
   } catch (err) {
+    cleanupLiveAudioCapture();
+    cleanupAudioPipeline();
+    if (state.micStream) {
+      state.micStream.getTracks().forEach(t => t.stop());
+      state.micStream = null;
+    }
+    if (state.audioContext) {
+      try { state.audioContext.close(); } catch (_) {}
+      state.audioContext = null;
+    }
     showToast('Errore microfono: ' + err.message, 'error', 4000);
   }
 }
@@ -537,7 +572,39 @@ function buildAudioPipeline(sourceNode) {
     state.highpassNode = hp;
   }
 
-  // 2. Compressore dinamico
+  // 2. Noise gate (-45 dB) con isteresi e rilascio graduale
+  if (UI.toggleNoisegate.checked) {
+    const gateAnalyser = ctx.createAnalyser();
+    gateAnalyser.fftSize = 512;
+    const gateGain = ctx.createGain();
+    gateGain.gain.value = 1;
+
+    // L'AnalyserNode lascia passare il segnale: analizza e poi va al gain
+    node.connect(gateAnalyser);
+    gateAnalyser.connect(gateGain);
+
+    const timeData = new Float32Array(gateAnalyser.fftSize);
+    const threshold = Math.pow(10, -45 / 20);
+    const gateInterval = setInterval(() => {
+      gateAnalyser.getFloatTimeDomainData(timeData);
+      let sum = 0;
+      for (let i = 0; i < timeData.length; i++) sum += timeData[i] * timeData[i];
+      const rms = Math.sqrt(sum / timeData.length);
+      const now = ctx.currentTime;
+      gateGain.gain.setTargetAtTime(
+        rms >= threshold ? 1 : 0,
+        now,
+        rms >= threshold ? 0.02 : 0.12
+      );
+    }, 50);
+
+    state.noiseGateNode = gateGain;
+    state.noiseGateAnalyser = gateAnalyser;
+    state.noiseGateInterval = gateInterval;
+    node = gateGain;
+  }
+
+  // 3. Compressore dinamico
   if (UI.toggleCompressor.checked) {
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -48;
@@ -550,7 +617,7 @@ function buildAudioPipeline(sourceNode) {
     state.compressorNode = comp;
   }
 
-  // 3. Auto-gain adattivo
+  // 4. Auto-gain adattivo
   if (UI.toggleAutogain.checked) {
     const gain = ctx.createGain();
     gain.gain.value = 2.4;
@@ -562,12 +629,67 @@ function buildAudioPipeline(sourceNode) {
   return node;
 }
 
+function cleanupAudioPipeline() {
+  if (state.noiseGateInterval) {
+    clearInterval(state.noiseGateInterval);
+    state.noiseGateInterval = null;
+  }
+  if (state.noiseGateAnalyser) {
+    try { state.noiseGateAnalyser.disconnect(); } catch (_) {}
+    state.noiseGateAnalyser = null;
+  }
+  if (state.noiseGateNode) {
+    try { state.noiseGateNode.disconnect(); } catch (_) {}
+    state.noiseGateNode = null;
+  }
+}
+
+// Cattura PCM in tempo reale per la trascrizione live: ogni intervallo
+// inviamo solo i campioni nuovi, non l'intera lezione.
+function setupLiveAudioCapture(chain) {
+  const ctx = state.audioContext;
+  const processor = ctx.createScriptProcessor(4096, 1, 1);
+
+  processor.onaudioprocess = (e) => {
+    if (!state.liveTranscriptionEnabled || !state.recording || state.paused) return;
+    const input = e.inputBuffer.getChannelData(0);
+    state.liveSampleBuffer.push(new Float32Array(input));
+  };
+
+  // Un nodo ScriptProcessor elabora solo se collegato alla destinazione:
+  // il gain a 0 evita eco o doppio audio.
+  const silentGain = ctx.createGain();
+  silentGain.gain.value = 0;
+  chain.connect(processor);
+  processor.connect(silentGain);
+  silentGain.connect(ctx.destination);
+
+  state.liveProcessorNode = processor;
+  state.liveSilentGain = silentGain;
+  state.liveSampleRate = ctx.sampleRate;
+}
+
+function cleanupLiveAudioCapture() {
+  if (state.liveProcessorNode) {
+    state.liveProcessorNode.onaudioprocess = null;
+    try { state.liveProcessorNode.disconnect(); } catch (_) {}
+    state.liveProcessorNode = null;
+  }
+  if (state.liveSilentGain) {
+    try { state.liveSilentGain.disconnect(); } catch (_) {}
+    state.liveSilentGain = null;
+  }
+  state.liveSampleBuffer = [];
+}
+
 function pauseRecording() {
   if (state.mediaRecorder && state.mediaRecorder.state === 'recording') {
     state.mediaRecorder.pause();
     state.paused = true;
     clearInterval(state.recTimerInterval);
     clearInterval(state.liveChunkInterval);
+    state.liveChunkInterval = null;
+    state.liveSampleBuffer = [];
     UI.btnRec.classList.remove('recording');
 
     if (UI.centerPauseText) UI.centerPauseText.textContent = 'Riprendi';
@@ -598,6 +720,7 @@ function stopRecording() {
   return new Promise((resolve) => {
     clearInterval(state.recTimerInterval);
     clearInterval(state.liveChunkInterval);
+    state.liveChunkInterval = null;
     state.recording = false;
     state.paused = false;
 
@@ -617,7 +740,9 @@ function stopRecording() {
       resolve();
     }
 
-    // Cleanup audio context
+    // Cleanup cattura live e audio context
+    cleanupLiveAudioCapture();
+    cleanupAudioPipeline();
     if (state.micStream) {
       state.micStream.getTracks().forEach(t => t.stop());
       state.micStream = null;
@@ -630,7 +755,11 @@ function stopRecording() {
 }
 
 async function saveRecording() {
-  if (state.audioChunks.length === 0) return;
+  if (state.audioChunks.length === 0) {
+    showToast('Nessun audio registrato', 'error', 3000);
+    UI.emptyState.classList.remove('hidden');
+    return;
+  }
 
   try {
     const blob = new Blob(state.audioChunks, { type: 'audio/webm' });
@@ -648,9 +777,12 @@ async function convertToWav(webmBuffer) {
   const decoded = await tmpCtx.decodeAudioData(webmBuffer.slice(0));
   await tmpCtx.close();
 
+  return encodeWav(decoded.getChannelData(0), decoded.sampleRate);
+}
+
+// Converte campioni Float32 in un WAV PCM 16 bit mono
+function encodeWav(samples, sampleRate) {
   const numChannels = 1;
-  const sampleRate = decoded.sampleRate;
-  const samples = decoded.getChannelData(0);
   const bytesPerSample = 2;
   const blockAlign = numChannels * bytesPerSample;
 
@@ -698,18 +830,66 @@ function showSaveNameModal(wavBuffer) {
   UI.modalSaveName.classList.remove('hidden');
   UI.inputRecName.focus();
 
+  let saving = false;
+
+  const resetRecordingState = () => {
+    UI.modalSaveName.classList.add('hidden');
+    showPlayerOrWaveform('waveform');
+    UI.recTimer.textContent = '00:00:00';
+    state.recDuration = 0;
+    state.audioChunks = [];
+    state.liveTextAccumulated = '';
+    state.liveTextTranslated = false;
+  };
+
+  const restoreMainView = () => {
+    if (state.activeRec) {
+      UI.emptyState.classList.add('hidden');
+      UI.transcriptView.classList.remove('hidden');
+      if (state.playerAudio?.getAttribute('src')) {
+        showPlayerOrWaveform('player');
+      }
+    } else {
+      UI.transcriptView.classList.add('hidden');
+      UI.emptyState.classList.remove('hidden');
+    }
+  };
+
+  const cancel = () => {
+    if (saving) return;
+    showConfirmModal(
+      'Scartare la registrazione?',
+      'La registrazione non è ancora stata salvata. Se continui verrà persa definitivamente.',
+      () => {
+        resetRecordingState();
+        restoreMainView();
+        showToast('Registrazione scartata', 'info', 2000);
+      }
+    );
+  };
+
   const save = async () => {
+    if (saving) return;
+
     const name = UI.inputRecName.value.trim() || 'Lezione';
     const folder = UI.selectRecFolder.value || null;
-    UI.modalSaveName.classList.add('hidden');
 
-    const result = await API.recordingSave({
-      buffer: wavBuffer,
-      name,
-      folder,
-    });
+    saving = true;
+    UI.btnSaveConfirm.disabled = true;
 
-    if (result.success) {
+    try {
+      const result = await API.recordingSave({
+        buffer: wavBuffer,
+        name,
+        folder,
+      });
+
+      if (!result.success) {
+        // Non chiudere la modale: l'utente può riprovare senza perdere l'audio
+        showToast('Errore salvataggio: ' + result.error, 'error', 4000);
+        return;
+      }
+
       await API.recordingUpdateDuration({
         recDir: result.recDir,
         duration: state.recDuration,
@@ -723,7 +903,9 @@ function showSaveNameModal(wavBuffer) {
         };
         await API.transcriptSave({
           recDir: result.recDir,
-          transcript: transcriptObj
+          transcript: transcriptObj,
+          isLivePreview: true,
+          isTranslated: state.liveTextTranslated,
         });
       }
 
@@ -739,28 +921,26 @@ function showSaveNameModal(wavBuffer) {
           if (found) { saved = found; break; }
         }
       }
-      if (saved) {
-        if (state.liveTextAccumulated) {
-          saved.hasTranscript = true;
-          saved.isLivePreview = true;
-          saved.isCompleteTranscript = false;
-        }
-        openRecording(saved);
-      }
-    } else {
-      showToast('Errore salvataggio: ' + result.error, 'error', 4000);
-    }
 
-    showPlayerOrWaveform('waveform');
-    UI.recTimer.textContent = '00:00:00';
-    state.recDuration = 0;
+      resetRecordingState();
+      if (saved) {
+        openRecording(saved);
+      } else {
+        restoreMainView();
+      }
+    } catch (err) {
+      showToast('Errore nel salvataggio: ' + err.message, 'error', 4000);
+    } finally {
+      saving = false;
+      UI.btnSaveConfirm.disabled = false;
+    }
   };
 
   UI.btnSaveConfirm.onclick = save;
   UI.inputRecName.onkeydown = (e) => { if (e.key === 'Enter') save(); };
-  UI.btnSaveCancel.onclick = () => {
-    UI.modalSaveName.classList.add('hidden');
-    showPlayerOrWaveform('waveform');
+  UI.btnSaveCancel.onclick = cancel;
+  UI.modalSaveName.onclick = (e) => {
+    if (e.target === UI.modalSaveName) cancel();
   };
 }
 
@@ -888,21 +1068,31 @@ function setupTranscriptControls() {
     if (UI.transcribeProgressPct) UI.transcribeProgressPct.textContent = pct + '%';
   });
 
-  API.onTranscriptionDone((transcript) => {
-    state.transcript = transcript;
+  API.onTranscriptionDone((payload) => {
+    // Retrocompatibilità: il main ora invia { recDir, transcript, translate }
+    const transcript = payload?.transcript || payload;
+    const completedRecDir = payload?.recDir;
+    const isForActive = state.activeRec &&
+      (!completedRecDir || state.activeRec.recDir === completedRecDir);
+
     UI.transcribeProgress?.classList.add('hidden');
     UI.transcribeButtons?.classList.remove('hidden');
 
-    const isTranslate = UI.selectTranscribeMode?.value === 'translate';
-    if (state.activeRec) {
+    const isTranslate = typeof payload?.translate === 'boolean'
+      ? payload.translate
+      : state.transcriptionTranslate;
+
+    if (isForActive) {
+      state.transcript = transcript;
       state.activeRec.hasTranscript = true;
       state.activeRec.isCompleteTranscript = true;
       state.activeRec.isLivePreview = false;
       state.activeRec.isTranslated = isTranslate;
+
+      updateTranscriptStatusBadge();
+      renderTranscript();
     }
 
-    updateTranscriptStatusBadge();
-    renderTranscript();
     refreshLibrary();
     showToast(isTranslate ? 'Traduzione in Inglese completata al 100%!' : 'Trascrizione integrale completata al 100%!', 'success', 3000);
   });
@@ -917,47 +1107,90 @@ function setupTranscriptControls() {
 // Loop trascrizione live rapida / istantanea (intervallo 3.5s)
 function startLiveTranscriptionLoop() {
   clearInterval(state.liveChunkInterval);
-
-  const isTranslate = UI.selectTranscribeMode?.value === 'translate';
+  state.liveSampleBuffer = [];
 
   const runChunk = async () => {
-    if (!state.recording || state.paused || state.audioChunks.length === 0) return;
+    if (!state.recording || state.paused || state.liveTranscribing) return;
 
+    const samples = takeLiveSamples();
+    if (!samples) return;
+
+    // Evita di inviare silenzio a Whisper: riduce allucinazioni e consumo GPU
+    let energy = 0;
+    for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];
+    const rms = Math.sqrt(energy / samples.length);
+    if (rms < Math.pow(10, -50 / 20)) return;
+
+    const isTranslate = UI.selectTranscribeMode?.value === 'translate';
+    const sampleRate = state.liveSampleRate || 16000;
+
+    state.liveTranscribing = true;
     try {
-      const blob = new Blob(state.audioChunks, { type: 'audio/webm' });
-      const arrayBuffer = await blob.arrayBuffer();
-      const wavBuffer = await convertToWav(arrayBuffer);
+      const wavBuffer = encodeWav(samples, sampleRate);
 
-      // Invia al backend per trascrizione ultra-rapida con GPU Metal (meno di 0.4s)
+      // Inviamo solo i campioni nuovi: costo costante per ogni intervallo
       const res = await API.transcriptionChunk({
         buffer: wavBuffer,
-        language: 'it',
+        language: 'auto',
         translate: isTranslate,
       });
 
+      // Se la registrazione è terminata nel frattempo, non sporcare la nota
+      if (!state.recording) return;
+
       if (res.success && res.text) {
-        state.liveTextAccumulated = res.text;
+        const text = res.text.trim();
+        if (text) {
+          state.liveTextAccumulated = state.liveTextAccumulated
+            ? `${state.liveTextAccumulated} ${text}`
+            : text;
+          state.liveTextTranslated = isTranslate;
 
-        // Aggiorna anteprima live al centro della schermata di registrazione
-        if (UI.liveStreamText) {
-          UI.liveStreamText.textContent = res.text;
-          UI.liveStreamText.scrollTop = UI.liveStreamText.scrollHeight;
-        }
+          // Aggiorna anteprima live al centro della schermata di registrazione
+          if (UI.liveStreamText) {
+            UI.liveStreamText.textContent = state.liveTextAccumulated;
+            UI.liveStreamText.scrollTop = UI.liveStreamText.scrollHeight;
+          }
 
-        // Se la vista trascrizione è aperta, aggiorna subito il testo a video
-        if (UI.transcriptContent && (state.activeRec || !UI.transcriptView.classList.contains('hidden'))) {
-          UI.transcriptContent.textContent = res.text;
+          // Se la vista trascrizione è aperta, aggiorna subito il testo a video
+          if (UI.transcriptContent && (state.activeRec || !UI.transcriptView.classList.contains('hidden'))) {
+            UI.transcriptContent.textContent = state.liveTextAccumulated;
+          }
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      state.liveTranscribing = false;
+    }
   };
 
   // Esegui ogni 3.5 secondi per dare feedback immediato
   state.liveChunkInterval = setInterval(runChunk, 3500);
 }
 
+// Estrae e svuota i campioni PCM accumulati dall'ultimo invio
+function takeLiveSamples() {
+  if (!state.liveSampleBuffer.length) return null;
+
+  let total = 0;
+  for (const chunk of state.liveSampleBuffer) total += chunk.length;
+  const minSamples = Math.round((state.liveSampleRate || 16000) * 0.4);
+  if (total < minSamples) return null;
+
+  const merged = new Float32Array(total);
+  let offset = 0;
+  for (const chunk of state.liveSampleBuffer) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  state.liveSampleBuffer = [];
+  return merged;
+}
+
 function startTranscription(rec, isTranslate = false) {
   if (!rec || !rec.recDir) return;
+
+  state.transcriptionTranslate = isTranslate;
 
   UI.transcribeButtons?.classList.add('hidden');
   UI.transcribeProgress?.classList.remove('hidden');
@@ -972,7 +1205,7 @@ function startTranscription(rec, isTranslate = false) {
   API.transcriptionStart({
     audioPath: rec.audioPath,
     recDir: rec.recDir,
-    language: 'it',
+    language: 'auto',
     translate: isTranslate,
   });
 }
@@ -1105,16 +1338,32 @@ function renderLibrary() {
     emptyMsg.style.color = 'var(--text-muted)';
     emptyMsg.style.fontSize = '12px';
     emptyMsg.style.textAlign = 'center';
-    emptyMsg.innerHTML = `<span class="memo-icon icon-lg" style="margin-bottom:6px; opacity:0.6;">${ICONS.search}</span><br/>Nessuna registrazione trovata per "<strong>${query}</strong>"`;
+
+    const icon = document.createElement('span');
+    icon.className = 'memo-icon icon-lg';
+    icon.style.marginBottom = '6px';
+    icon.style.opacity = '0.6';
+    icon.innerHTML = ICONS.search;
+
+    emptyMsg.appendChild(icon);
+    emptyMsg.appendChild(document.createElement('br'));
+    emptyMsg.appendChild(document.createTextNode('Nessuna registrazione trovata per "'));
+    const strong = document.createElement('strong');
+    strong.textContent = query;
+    emptyMsg.appendChild(strong);
+    emptyMsg.appendChild(document.createTextNode('"'));
+
     UI.libraryTree.appendChild(emptyMsg);
   }
 }
 
 function filterRecordings(recs, query) {
   if (!query) return recs;
+  const q = query.toLowerCase();
   return recs.filter(r => {
-    const nameMatch = (r.name || r.dirName || '').toLowerCase().includes(query);
-    return nameMatch;
+    const nameMatch = (r.name || r.dirName || '').toLowerCase().includes(q);
+    const textMatch = (r.searchText || '').toLowerCase().includes(q);
+    return nameMatch || textMatch;
   });
 }
 
@@ -1157,7 +1406,7 @@ function createFolderElement(folder, autoExpand = false) {
     const renameBtn = document.createElement('button');
     renameBtn.className = 'folder-action-btn';
     renameBtn.title = 'Rinomina gruppo';
-    renameBtn.innerHTML = ICONS.pencil;
+    renameBtn.innerHTML = ICONS.edit;
     renameBtn.onclick = (e) => { e.stopPropagation(); renameFolder(folder.name); };
 
     const deleteBtn = document.createElement('button');
@@ -1199,6 +1448,7 @@ function createFolderElement(folder, autoExpand = false) {
 function createRecordingElement(rec, folderName) {
   const el = document.createElement('div');
   el.className = 'rec-item' + (rec.hasTranscript ? ' has-transcript' : '');
+  el.dataset.recDir = rec.recDir;
 
   // Preserva selezione attiva
   if (state.activeRec && state.activeRec.recDir === rec.recDir) {
@@ -1207,7 +1457,7 @@ function createRecordingElement(rec, folderName) {
 
   const icon = document.createElement('span');
   icon.className = 'rec-item-icon';
-  icon.innerHTML = rec.hasTranscript ? ICONS.fileText : ICONS.mic;
+  icon.innerHTML = rec.hasTranscript ? ICONS.document : ICONS.mic;
 
   const info = document.createElement('div');
   info.className = 'rec-item-info';
@@ -1276,6 +1526,8 @@ async function openRecording(rec, folderName) {
   UI.emptyState.classList.add('hidden');
   UI.recordingView?.classList.add('hidden');
   UI.transcriptView.classList.remove('hidden');
+  UI.transcribeProgress?.classList.add('hidden');
+  UI.transcribeButtons?.classList.remove('hidden');
 
   // Breadcrumb
   const displayFolder = rec.folder || folderName || 'Non categorizzate';
@@ -1283,11 +1535,8 @@ async function openRecording(rec, folderName) {
   UI.recNameLabel.textContent = rec.name || rec.dirName;
 
   // Evidenzia elemento attivo nella sidebar
-  document.querySelectorAll('.rec-item').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.rec-item').forEach(el => {
-    if (el.querySelector('.rec-item-name')?.textContent === (rec.name || rec.dirName)) {
-      el.classList.add('active');
-    }
+    el.classList.toggle('active', el.dataset.recDir === rec.recDir);
   });
 
   // Carica trascrizione esistente
@@ -1402,7 +1651,7 @@ function setupModalHandlers() {
     UI.modalInfo?.classList.add('hidden');
   });
 
-  [UI.modalFolder, UI.modalMove, UI.modalConfirm, UI.modalSaveName, UI.modalInfo].forEach(modal => {
+  [UI.modalFolder, UI.modalMove, UI.modalConfirm, UI.modalInfo].forEach(modal => {
     if (!modal) return;
     modal.addEventListener('click', (e) => {
       if (e.target === modal) modal.classList.add('hidden');
@@ -1413,10 +1662,28 @@ function setupModalHandlers() {
 async function renameFolder(oldName) {
   const newName = prompt(`Nuovo nome per il gruppo "${oldName}":`, oldName);
   if (!newName || newName === oldName) return;
+
+  const activeIsInFolder = !!state.activeRec &&
+    state.activeRec.recDir.split('/').slice(-2, -1)[0] === oldName;
+
+  if (activeIsInFolder) await saveTranscript();
+
   const result = await API.folderRename({ oldName, newName });
   if (result.success) {
+    if (activeIsInFolder && state.activeRec) {
+      const parts = state.activeRec.recDir.split('/');
+      parts[parts.length - 2] = result.name;
+      state.activeRec.recDir = parts.join('/');
+      state.activeRec.audioPath = `${state.activeRec.recDir}/audio.wav`;
+      state.activeRec.folder = result.name;
+    }
+
     showToast(`Gruppo rinominato in "${result.name}"`, 'success', 2000);
     await refreshLibrary();
+
+    if (activeIsInFolder && state.activeRec) {
+      openRecording(state.activeRec);
+    }
   } else {
     showToast(result.error, 'error', 3000);
   }
@@ -1427,8 +1694,28 @@ function deleteFolder(name) {
     'Elimina Gruppo',
     `Eliminare il gruppo "${name}"? Le registrazioni al suo interno non verranno cancellate ma spostate in "Non categorizzate".`,
     async () => {
+      const activeIsInFolder = !!state.activeRec &&
+        state.activeRec.recDir.split('/').slice(-2, -1)[0] === name;
+
+      if (activeIsInFolder) await saveTranscript();
+
       const result = await API.folderDelete({ name });
       if (result.success) {
+        if (activeIsInFolder) {
+          // La nota aperta è stata spostata: chiudila per evitare percorsi stale
+          if (state.playerAudio) {
+            state.playerAudio.pause();
+            state.playerAudio.removeAttribute('src');
+            state.playerAudio.load();
+          }
+          state.activeRec = null;
+          state.transcript = null;
+          UI.transcriptView.classList.add('hidden');
+          UI.emptyState.classList.remove('hidden');
+          UI.transcribeProgress?.classList.add('hidden');
+          UI.transcribeButtons?.classList.remove('hidden');
+          showPlayerOrWaveform('waveform');
+        }
         showToast(`Gruppo "${name}" eliminato`, 'info', 2000);
         await refreshLibrary();
       } else {
@@ -1456,6 +1743,7 @@ function showMoveModal(rec) {
         await refreshLibrary();
         if (state.activeRec && state.activeRec.recDir === rec.recDir) {
           state.activeRec.recDir = result.newPath;
+          state.activeRec.folder = name || null;
           openRecording(state.activeRec, name);
         }
       }
