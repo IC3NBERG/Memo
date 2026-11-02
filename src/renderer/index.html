@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' file:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;" />
+  <title>Memo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ── TITLEBAR ─────────────────────────────────────────── -->
+  <div id="titlebar">
+    <div class="titlebar-traffic-space"></div>
+    <span class="app-name">🎙️ Memo</span>
+  </div>
+
+  <!-- ── BANNER DOWNLOAD MODELLO ───────────────────────────── -->
+  <div id="model-banner" class="hidden">
+    <div class="model-banner-inner">
+      <span class="model-banner-icon">🤖</span>
+      <div class="model-banner-text">
+        <strong>Modello Whisper richiesto</strong>
+        <span id="model-banner-desc">Scaricamento del modello AI (≈1.5 GB)…</span>
+      </div>
+      <div class="model-progress-wrap">
+        <div class="model-progress-bar">
+          <div id="model-progress-fill"></div>
+        </div>
+        <span id="model-progress-pct">0%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── BANNER AGGIORNAMENTI ───────────────────────────────── -->
+  <div id="update-banner" class="hidden">
+    <div class="update-banner-inner">
+      <span class="update-banner-icon">✨</span>
+      <span id="update-banner-text">Nuovo aggiornamento disponibile.</span>
+      <button id="btn-update-action" class="btn-primary" style="padding: 4px 10px; font-size: 11px;">Riavvia e Aggiorna</button>
+      <button id="btn-update-dismiss" class="tb-btn" style="width: 20px; height: 20px; font-size: 10px;">✕</button>
+    </div>
+  </div>
+
+  <!-- ── LAYOUT PRINCIPALE ──────────────────────────────────── -->
+  <div id="app-layout">
+
+    <!-- SIDEBAR -->
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <span class="sidebar-title">Libreria</span>
+        <button id="btn-new-folder" title="Nuova materia">+ Materia</button>
+      </div>
+
+      <div id="library-tree"></div>
+
+      <div id="sidebar-footer">
+        <div class="footer-row" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+          <span class="app-version" id="app-version-label" style="font-size: 11px; color: var(--text-muted);">Memo</span>
+          <button id="btn-check-updates" class="btn-secondary" style="font-size: 10px; padding: 2px 6px;">🔄 Update</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- RESIZER -->
+    <div id="resizer"></div>
+
+    <!-- AREA CENTRALE -->
+    <main id="main-area">
+      <!-- stato: nessuna selezione -->
+      <div id="empty-state" class="center-placeholder">
+        <div class="empty-icon">🎙️</div>
+        <p>Premi <strong>REC</strong> per iniziare una nuova registrazione<br/>o seleziona una registrazione dalla libreria.</p>
+      </div>
+
+      <!-- Vista trascrizione -->
+      <div id="transcript-view" class="hidden">
+        <div id="transcript-toolbar">
+          <div class="transcript-actions-left">
+            <span id="rec-name-label" class="rec-title" contenteditable="false"></span>
+          </div>
+          <div class="transcript-actions-right">
+            <label class="toggle-wrap" title="Mostra/nasconde i timestamp">
+              <input type="checkbox" id="toggle-timestamps" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-label">⏱ Timestamps</span>
+            </label>
+            <button id="btn-copy-all" class="btn-secondary" title="Copia tutto il testo">📋 Copia</button>
+            <button id="btn-export-txt" class="btn-secondary" title="Esporta come TXT">↓ TXT</button>
+            <button id="btn-export-md" class="btn-secondary" title="Esporta come Markdown">↓ MD</button>
+          </div>
+        </div>
+
+        <!-- Bottoni trascrizione -->
+        <div id="transcribe-bar">
+          <div id="transcribe-buttons">
+            <button id="btn-transcribe-live" class="btn-transcribe" disabled>
+              <span class="btn-icon">⚡</span> Trascrivi Live
+            </button>
+            <button id="btn-transcribe-after" class="btn-transcribe">
+              <span class="btn-icon">📝</span> Trascrivi
+            </button>
+          </div>
+          <div id="transcribe-progress" class="hidden">
+            <div class="transcribe-progress-bar">
+              <div id="transcribe-progress-fill"></div>
+            </div>
+            <span id="transcribe-progress-pct">0%</span>
+            <span id="transcribe-status-text">Trascrizione in corso…</span>
+          </div>
+        </div>
+
+        <!-- Area testo trascrizione -->
+        <div id="transcript-area">
+          <div id="transcript-content" contenteditable="true" spellcheck="true"
+               data-placeholder="La trascrizione apparirà qui. Puoi modificarla direttamente."></div>
+          <div id="timestamps-margin"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── BARRA BASSA ─────────────────────────────────────────── -->
+  <div id="bottom-bar">
+    <div id="bottom-bar-inner">
+
+      <!-- Controlli registrazione -->
+      <div id="rec-controls">
+        <button id="btn-rec" class="rec-btn" title="Inizia registrazione">
+          <span class="rec-dot"></span> REC
+        </button>
+        <button id="btn-pause" class="ctrl-btn" title="Pausa" disabled>⏸</button>
+        <button id="btn-stop" class="ctrl-btn" title="Stop" disabled>⏹</button>
+        <span id="rec-timer" class="rec-timer">00:00:00</span>
+      </div>
+
+      <!-- Waveform -->
+      <div id="waveform-wrap">
+        <canvas id="waveform-canvas"></canvas>
+      </div>
+
+      <!-- Player (quando riproduce un file) -->
+      <div id="player-controls" class="hidden">
+        <button id="btn-play-pause" class="ctrl-btn" title="Play/Pausa">▶</button>
+        <input type="range" id="player-seek" min="0" max="100" value="0" />
+        <span id="player-time">0:00 / 0:00</span>
+        <span class="vol-label">🔊</span>
+        <input type="range" id="player-volume" min="0" max="1" step="0.01" value="1" />
+      </div>
+
+      <!-- Toggle preprocessing -->
+      <div id="preprocessing-toggles">
+        <label class="preproc-toggle" title="Filtro passa-alto (80Hz)">
+          <input type="checkbox" id="toggle-highpass" checked />
+          <span>High-Pass</span>
+        </label>
+        <label class="preproc-toggle" title="Noise Gate">
+          <input type="checkbox" id="toggle-noisegate" checked />
+          <span>Noise Gate</span>
+        </label>
+        <label class="preproc-toggle" title="Compressore dinamico">
+          <input type="checkbox" id="toggle-compressor" checked />
+          <span>Compressor</span>
+        </label>
+        <label class="preproc-toggle" title="Guadagno automatico">
+          <input type="checkbox" id="toggle-autogain" checked />
+          <span>Auto-Gain</span>
+        </label>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── MODALI ──────────────────────────────────────────────── -->
+
+  <!-- Modal: nuova materia -->
+  <div id="modal-folder" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Nuova Materia</h3>
+      <input type="text" id="input-folder-name" placeholder="Es. Analisi Matematica" maxlength="50" />
+      <div class="modal-actions">
+        <button id="btn-folder-cancel" class="btn-secondary">Annulla</button>
+        <button id="btn-folder-confirm" class="btn-primary">Crea</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: sposta registrazione -->
+  <div id="modal-move" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Sposta in…</h3>
+      <div id="move-folder-list"></div>
+      <div class="modal-actions">
+        <button id="btn-move-cancel" class="btn-secondary">Annulla</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: conferma eliminazione -->
+  <div id="modal-confirm" class="modal-overlay hidden">
+    <div class="modal">
+      <h3 id="confirm-title">Conferma eliminazione</h3>
+      <p id="confirm-message"></p>
+      <div class="modal-actions">
+        <button id="btn-confirm-cancel" class="btn-secondary">Annulla</button>
+        <button id="btn-confirm-ok" class="btn-danger">Elimina</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: salva nome registrazione -->
+  <div id="modal-save-name" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Nome registrazione</h3>
+      <input type="text" id="input-rec-name" placeholder="Es. Lezione 5 – Derivate parziali" maxlength="60" />
+      <div class="modal-folder-select">
+        <label>Materia:</label>
+        <select id="select-rec-folder">
+          <option value="">— Non categorizzata —</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-save-cancel" class="btn-secondary">Annulla</button>
+        <button id="btn-save-confirm" class="btn-primary">Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Elemento audio nascosto per la riproduzione -->
+  <audio id="hidden-audio"></audio>
+
+  <script src="app.js"></script>
+</body>
+</html>
+

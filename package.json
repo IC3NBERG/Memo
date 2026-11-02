@@ -1,0 +1,91 @@
+{
+  "name": "memo",
+  "version": "1.0.0",
+  "description": "Registrazione e trascrizione audio per lezioni universitarie",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac",
+    "build:dir": "electron-builder --mac --dir",
+    "build-whisper": "bash scripts/build-whisper.sh",
+    "install:app": "cp -R dist/mac-arm64/Memo.app /Applications/ && echo 'Memo installata con successo in /Applications/Memo.app!'",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "build": {
+    "appId": "com.memo.app",
+    "productName": "Memo",
+    "directories": {
+      "output": "dist"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "giorgiocalleri",
+        "repo": "memo"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/icons/icon.icns",
+      "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Memo ha bisogno del microfono per registrare le lezioni."
+      }
+    },
+    "dmg": {
+      "title": "Installa Memo",
+      "contents": [
+        {
+          "x": 130,
+          "y": 180
+        },
+        {
+          "x": 370,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 500,
+        "height": 340
+      }
+    },
+    "extraResources": [
+      {
+        "from": "bin/",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ]
+  }
+}
