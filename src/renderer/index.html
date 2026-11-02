@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' file:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;" />
-  <title>Memo</title>
+  <title>Crunch</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" />
   <link rel="stylesheet" href="style.css" />
@@ -15,7 +15,7 @@
     <div class="titlebar-traffic-space"></div>
     <div class="app-brand">
       <span class="brand-icon" id="brand-icon-slot"></span>
-      <span class="app-name">Memo</span>
+      <span class="app-name">Crunch</span>
     </div>
   </div>
 
@@ -54,7 +54,7 @@
       <div id="sidebar-header">
         <span class="sidebar-title">Gruppi</span>
         <div class="sidebar-header-actions">
-          <button id="btn-info" class="btn-sidebar-icon" title="Guida & Architettura di Memo (i)">
+          <button id="btn-info" class="btn-sidebar-icon" title="Guida & Architettura di Crunch (i)">
             <span class="btn-icon" id="icon-info-slot"></span>
           </button>
           <button id="btn-new-folder" class="btn-new-folder" title="Nuovo gruppo">
@@ -77,7 +77,7 @@
 
       <div id="sidebar-footer">
         <div class="footer-row">
-          <span class="app-version" id="app-version-label">Memo v1.0.3</span>
+          <span class="app-version" id="app-version-label">Crunch v1.0.4</span>
           <button id="btn-check-updates" class="btn-secondary btn-xs" title="Controlla aggiornamenti">
             <span class="btn-icon" id="icon-update-slot"></span>
             <span>Update</span>
@@ -113,7 +113,7 @@
               <span class="pulse-core"></span>
               <span>REGISTRAZIONE IN CORSO</span>
             </div>
-            <span class="rec-quality-badge">16 kHz · WAV PCM</span>
+            <span class="rec-quality-badge">16 kHz · WAV PCM Metal</span>
           </div>
 
           <div class="rec-timer-display" id="rec-center-timer">00:00:00</div>
@@ -135,7 +135,7 @@
               <div class="live-toggle-label-wrap">
                 <div class="live-toggle-title">
                   <span class="btn-icon" id="rec-live-spark-icon"></span>
-                  <strong>Trascrizione Live in diretta</strong>
+                  <strong>Trascrizione Live istantanea</strong>
                 </div>
                 <div class="live-battery-warning">
                   <span class="btn-icon" id="rec-battery-info-icon"></span>
@@ -152,7 +152,7 @@
             <div id="live-text-container" class="live-text-container hidden">
               <div class="live-text-header">
                 <span class="live-dot-pulse"></span>
-                <span>Testo in tempo reale:</span>
+                <span>Testo in tempo reale (Live):</span>
               </div>
               <div id="live-stream-text" class="live-stream-text">
                 <span class="live-placeholder-text">In ascolto della voce…</span>
@@ -161,11 +161,11 @@
 
             <!-- Hint a basso consumo quando toggle è OFF -->
             <div id="live-off-hint" class="live-off-hint">
-              <span>Risparmio energetico attivo: la trascrizione verrà elaborata al termine della registrazione con la massima accuratezza.</span>
+              <span>Risparmio energetico attivo: la trascrizione integrale verrà elaborata al termine della registrazione garantendo il 100% delle parole.</span>
             </div>
           </div>
 
-          <!-- Controlli rapidi al centro -->
+          <!-- Controlli al centro schermo (Pausa e Termina) -->
           <div class="rec-center-actions">
             <button id="btn-center-pause" class="btn-secondary btn-md">
               <span class="btn-icon" id="center-pause-icon-slot"></span>
@@ -221,7 +221,7 @@
         <!-- Bottoni e stato trascrizione -->
         <div id="transcribe-bar">
           <div id="transcribe-buttons">
-            <button id="btn-transcribe-after" class="btn-transcribe btn-transcribe-main" title="Trascrivi l'intera registrazione">
+            <button id="btn-transcribe-after" class="btn-transcribe btn-transcribe-main" title="Elabora trascrizione completa da file audio">
               <span class="btn-icon" id="icon-transcribe-slot"></span>
               <span id="btn-transcribe-text">Trascrivi</span>
             </button>
@@ -236,11 +236,10 @@
               </select>
             </div>
           </div>
-          <!-- Badge Live in ascolto -->
-          <div id="live-indicator-badge" class="live-badge hidden">
-            <span class="live-dot-pulse"></span>
-            <span id="live-indicator-text">Trascrizione Live attiva…</span>
-          </div>
+
+          <!-- Badge di accuratezza trascrizione: Live Preview vs Completa 100% -->
+          <div id="transcript-status-badge" class="transcript-status-badge hidden"></div>
+
           <!-- Progress bar trascrizione standard -->
           <div id="transcribe-progress" class="hidden">
             <div class="transcribe-progress-bar">
@@ -265,17 +264,11 @@
   <div id="bottom-bar">
     <div id="bottom-bar-inner">
 
-      <!-- Controlli registrazione -->
+      <!-- Controlli registrazione: SOLO REC e TIMER in basso -->
       <div id="rec-controls">
-        <button id="btn-rec" class="rec-btn" title="Inizia registrazione">
+        <button id="btn-rec" class="rec-btn" title="Inizia nuova registrazione">
           <span class="rec-dot"></span>
           <span class="rec-text">REC</span>
-        </button>
-        <button id="btn-pause" class="ctrl-btn" title="Pausa registrazione" disabled>
-          <span id="icon-pause-slot"></span>
-        </button>
-        <button id="btn-stop" class="ctrl-btn" title="Stop e salva registrazione" disabled>
-          <span id="icon-stop-slot"></span>
         </button>
         <span id="rec-timer" class="rec-timer">00:00:00</span>
       </div>
@@ -397,7 +390,7 @@
         <div class="modal-header-left">
           <span class="modal-icon-header" id="modal-info-icon-slot"></span>
           <div>
-            <h3>Guida & Architettura di Memo</h3>
+            <h3>Guida & Architettura di Crunch</h3>
             <span class="modal-subtitle">Funzionamento, preprocessing audio e tecnologie integrate</span>
           </div>
         </div>
@@ -421,16 +414,16 @@
               <p>Un analizzatore FFT dedicato elabora lo spettro sonoro a 60 fps per visualizzare visivamente la presenza della voce del docente e il livello di gain.</p>
             </div>
             <div class="info-card">
-              <strong>Trascrizione Live</strong>
-              <p>Attivando "Live", Memo campiona intervalli audio ed esegue Whisper Metal in background, generando un'anteprima del testo trascritta in tempo reale durante la lezione.</p>
+              <strong>Trascrizione Live Istantanea (3.5s)</strong>
+              <p>Attivando "Live", Crunch campiona l'audio ogni 3.5 secondi con GPU Metal in background, generando un'anteprima istantanea durante la lezione.</p>
             </div>
             <div class="info-card">
-              <strong>Trascrizione Post-Lezione</strong>
-              <p>Al termine, l'intera traccia audio viene decodificata con massima accuratezza, formattazione a paragrafi, punteggiatura e timestamp temporali precisi.</p>
+              <strong>Verifica Integrale Completa (100%)</strong>
+              <p>Al termine, aprendo la nota e cliccando su "Trascrivi / Perfeziona", l'intera traccia originale <code>audio.wav</code> viene decodificata con accuratezza al 100%, recuperando qualsiasi parola non inclusa nell'anteprima live.</p>
             </div>
             <div class="info-card full-width">
               <strong>Traduzione Automatica ("Traduci in Inglese")</strong>
-              <p>Sfrutta la decodifica multilingua avanzata di Whisper: lezioni e conferenze tenute in italiano, spagnolo, francese o tedesco possono essere tradotte direttamente in inglese fluente senza passaggi cloud intermedi.</p>
+              <p>Sfrutta la decodifica multilingua di Whisper: lezioni e conferenze in italiano, spagnolo, francese o tedesco vengono tradotte direttamente in inglese fluente senza cloud.</p>
             </div>
           </div>
         </div>
@@ -486,7 +479,7 @@
             </div>
             <div class="info-card">
               <strong>100% Privacy & Offline</strong>
-              <p>Tutti i file audio, note e trascrizioni restano confinati in locale in <code>~/MemoRecordings/</code>. Nessun dato lascia il Mac e non è richiesta alcuna connessione a server terzi.</p>
+              <p>Tutti i file audio, note e trascrizioni restano confinati in locale in <code>~/CrunchRecordings/</code>. Nessun dato lascia il Mac e non è richiesta alcuna connessione a server terzi.</p>
             </div>
             <div class="info-card">
               <strong>Electron 34 + Web Audio API</strong>

@@ -1,14 +1,14 @@
 {
-  "name": "memo",
-  "version": "1.0.3",
-  "description": "Registrazione e trascrizione audio per lezioni universitarie",
+  "name": "crunch",
+  "version": "1.0.4",
+  "description": "Registrazione e trascrizione audio per lezioni universitarie con accelerazione Metal",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac",
     "build:dir": "electron-builder --mac --dir",
     "build-whisper": "bash scripts/build-whisper.sh",
-    "install:app": "cp -R dist/mac-arm64/Memo.app /Applications/ && echo 'Memo installata con successo in /Applications/Memo.app!'",
+    "install:app": "cp -R dist/mac-arm64/Crunch.app /Applications/ && echo 'Crunch installata con successo in /Applications/Crunch.app!'",
     "postinstall": "electron-builder install-app-deps"
   },
   "repository": {
@@ -23,8 +23,8 @@
     "electron-updater": "^6.8.11"
   },
   "build": {
-    "appId": "com.memo.app",
-    "productName": "Memo",
+    "appId": "com.crunch.app",
+    "productName": "Crunch",
     "directories": {
       "output": "dist"
     },
@@ -54,11 +54,11 @@
       "icon": "assets/icons/icon.icns",
       "identity": null,
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Memo ha bisogno del microfono per registrare le lezioni."
+        "NSMicrophoneUsageDescription": "Crunch ha bisogno del microfono per registrare le lezioni."
       }
     },
     "dmg": {
-      "title": "Installa Memo",
+      "title": "Installa Crunch",
       "contents": [
         {
           "x": 130,

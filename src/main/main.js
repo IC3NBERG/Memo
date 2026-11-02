@@ -10,20 +10,36 @@ const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
 // ─── Percorsi principali ───────────────────────────────────────────────────
-const RECORDINGS_DIR = path.join(os.homedir(), 'MemoRecordings');
+const OLD_MEMO_DIR = path.join(os.homedir(), 'MemoRecordings');
+const RECORDINGS_DIR = path.join(os.homedir(), 'CrunchRecordings');
+
+// Se esiste MemoRecordings ma non ancora CrunchRecordings, migra subito senza riscaricare il modello!
+if (fs.existsSync(OLD_MEMO_DIR) && !fs.existsSync(RECORDINGS_DIR)) {
+  try {
+    fs.renameSync(OLD_MEMO_DIR, RECORDINGS_DIR);
+  } catch (_) {}
+}
+
 const MODELS_DIR = path.join(RECORDINGS_DIR, '.models');
 const UNSORTED_DIR = path.join(RECORDINGS_DIR, '_unsorted');
 const MODEL_FILENAME = 'ggml-large-v3-turbo.bin';
-const MODEL_PATH = path.join(MODELS_DIR, MODEL_FILENAME);
+
+function getModelPath() {
+  const primary = path.join(MODELS_DIR, MODEL_FILENAME);
+  if (fs.existsSync(primary)) return primary;
+  const fallbackOld = path.join(OLD_MEMO_DIR, '.models', MODEL_FILENAME);
+  if (fs.existsSync(fallbackOld)) return fallbackOld;
+  return primary;
+}
+
+const MODEL_PATH = getModelPath();
 const MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin';
 
 // Percorso al binario whisper-cli (dentro l'app oppure nella dir di sviluppo)
 function getWhisperBinPath() {
-  // In produzione (app pacchettizzata)
   if (app.isPackaged) {
     return path.join(process.resourcesPath, 'bin', 'whisper-cli');
   }
-  // In sviluppo
   return path.join(__dirname, '..', '..', 'bin', 'whisper-cli');
 }
 
@@ -34,6 +50,15 @@ function ensureDirectories() {
       fs.mkdirSync(dir, { recursive: true });
     }
   });
+
+  // Se il modello è rimasto nel vecchio percorso, copialo o linkalo nel nuovo
+  const oldModel = path.join(OLD_MEMO_DIR, '.models', MODEL_FILENAME);
+  const newModel = path.join(MODELS_DIR, MODEL_FILENAME);
+  if (fs.existsSync(oldModel) && !fs.existsSync(newModel)) {
+    try {
+      fs.copyFileSync(oldModel, newModel);
+    } catch (_) {}
+  }
 }
 
 // ─── Finestra principale ───────────────────────────────────────────────────
@@ -45,6 +70,7 @@ function createWindow() {
     height: 820,
     minWidth: 900,
     minHeight: 600,
+    title: 'Crunch',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 12 },
     backgroundColor: '#1E1A17',
@@ -56,12 +82,16 @@ function createWindow() {
     icon: path.join(__dirname, '..', '..', 'assets', 'icons', 'icon.png'),
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, '..', rendererPath()));
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
   });
+}
+
+function rendererPath() {
+  return path.join('renderer', 'index.html');
 }
 
 // ─── Auto-Updater ──────────────────────────────────────────────────────────
@@ -88,12 +118,11 @@ function setupAutoUpdater() {
     mainWindow?.webContents.send('update:status', {
       type: 'not-available',
       version: info?.version || app.getVersion(),
-      message: 'Memo è già aggiornato all\'ultima versione.'
+      message: 'Crunch è già aggiornato all\'ultima versione.'
     });
   });
 
   autoUpdater.on('error', (err) => {
-    // Non allarmiamo in modalità di sviluppo o se offline
     mainWindow?.webContents.send('update:status', {
       type: 'error',
       message: err ? (err.message || String(err)) : 'Errore durante la ricerca aggiornamenti'
@@ -117,12 +146,10 @@ function setupAutoUpdater() {
   });
 
   if (app.isPackaged) {
-    // Controlla dopo 4 secondi dall'avvio
     setTimeout(() => {
       autoUpdater.checkForUpdates().catch(() => {});
     }, 4000);
 
-    // Controlla ogni 3 ore
     setInterval(() => {
       autoUpdater.checkForUpdates().catch(() => {});
     }, 3 * 60 * 60 * 1000);
@@ -166,17 +193,19 @@ app.on('window-all-closed', () => {
 
 // ─── IPC: Stato modello ────────────────────────────────────────────────────
 ipcMain.handle('model:check', () => {
-  return fs.existsSync(MODEL_PATH);
+  return fs.existsSync(getModelPath());
 });
 
 // ─── IPC: Download modello ─────────────────────────────────────────────────
 ipcMain.on('model:download', (event) => {
-  if (fs.existsSync(MODEL_PATH)) {
+  const currentModelPath = getModelPath();
+  if (fs.existsSync(currentModelPath)) {
     event.sender.send('model:download-done');
     return;
   }
 
-  const tmpPath = MODEL_PATH + '.tmp';
+  const targetPath = path.join(MODELS_DIR, MODEL_FILENAME);
+  const tmpPath = targetPath + '.tmp';
 
   function startDownload(url, redirectCount = 0) {
     if (redirectCount > 10) {
@@ -216,7 +245,7 @@ ipcMain.on('model:download', (event) => {
       file.on('finish', () => {
         file.close(() => {
           try {
-            fs.renameSync(tmpPath, MODEL_PATH);
+            fs.renameSync(tmpPath, targetPath);
             event.sender.send('model:download-done');
           } catch (e) {
             event.sender.send('model:download-error', e.message);
@@ -238,18 +267,30 @@ ipcMain.on('model:download', (event) => {
   startDownload(MODEL_URL);
 });
 
-// ─── IPC: Salva audio WAV ──────────────────────────────────────────────────
+// ─── IPC: Salva audio WAV (Anti-sovrascrittura garantita) ───────────────────
 ipcMain.handle('recording:save', async (event, { buffer, folder, name }) => {
   try {
     const date = new Date();
-    const dateStr = date.toISOString().slice(0, 10);
+    const pad = (n) => String(n).padStart(2, '0');
+    const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    const timeStr = `${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
     const safeName = (name || 'Lezione').replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim() || 'Lezione';
-    const recDirName = `${dateStr}_${safeName}`;
 
     const baseDir = folder ? path.join(RECORDINGS_DIR, folder) : UNSORTED_DIR;
-    const recDir = path.join(baseDir, recDirName);
+    if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
-    if (!fs.existsSync(recDir)) fs.mkdirSync(recDir, { recursive: true });
+    let recDirName = `${dateStr}_${timeStr}_${safeName}`;
+    let recDir = path.join(baseDir, recDirName);
+
+    // Se esiste già una cartella identica, aggiungi progressivo
+    let counter = 1;
+    while (fs.existsSync(recDir)) {
+      recDirName = `${dateStr}_${timeStr}_${safeName}_${counter}`;
+      recDir = path.join(baseDir, recDirName);
+      counter++;
+    }
+
+    fs.mkdirSync(recDir, { recursive: true });
 
     const audioPath = path.join(recDir, 'audio.wav');
     fs.writeFileSync(audioPath, Buffer.from(buffer));
@@ -260,6 +301,7 @@ ipcMain.handle('recording:save', async (event, { buffer, folder, name }) => {
       folder: folder || null,
       duration: 0,
       hasTranscript: false,
+      isCompleteTranscript: false,
     };
     fs.writeFileSync(path.join(recDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
 
@@ -284,10 +326,11 @@ ipcMain.handle('recording:update-duration', (event, { recDir, duration }) => {
   }
 });
 
-// ─── IPC: Trascrizione ─────────────────────────────────────────────────────
+// ─── IPC: Trascrizione Integrale Completa & Traduzione ──────────────────────
 ipcMain.on('transcription:start', (event, { audioPath, recDir, language, translate }) => {
-  if (!fs.existsSync(MODEL_PATH)) {
-    event.sender.send('transcription:error', 'Modello Whisper non trovato in ~/.MemoRecordings/.models.');
+  const currentModelPath = getModelPath();
+  if (!fs.existsSync(currentModelPath)) {
+    event.sender.send('transcription:error', 'Modello Whisper non trovato in ~/.CrunchRecordings/.models.');
     return;
   }
 
@@ -300,10 +343,17 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
   const audioBasename = path.basename(audioPath, path.extname(audioPath));
   const outputPrefix = path.join(recDir, audioBasename);
 
-  // Argomenti conformi a whisper-cli nativo (whisper.cpp)
+  // Rimuovi vecchi file per evitare che letture residue sporchino la traduzione/ritrascrizione
+  ['.json', '.txt', '.srt', '.vtt', '.csv'].forEach(ext => {
+    try {
+      const f = outputPrefix + ext;
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    } catch (_) {}
+  });
+
+  // Argomenti per whisper-cli nativo Metal
   const args = [
-    '--model', MODEL_PATH,
-    '--language', language || 'it',
+    '--model', currentModelPath,
     '--output-file', outputPrefix,
     '--output-json',
     '--output-txt',
@@ -313,14 +363,16 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
   ];
 
   if (translate) {
+    args.push('--language', language || 'it');
     args.push('--translate');
+  } else {
+    args.push('--language', language || 'it');
   }
 
   const proc = spawn(whisperBin, args);
 
   const handleOutput = (data) => {
     const line = data.toString();
-    // whisper.cpp stampa: "progress = 45%" o simile
     const match = line.match(/(?:progress\s*=\s*|(\d+)%)/i);
     if (match) {
       const pctMatch = line.match(/(\d+)%/);
@@ -364,11 +416,14 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
       fs.writeFileSync(path.join(recDir, 'transcript.json'), JSON.stringify(transcript, null, 2));
       fs.writeFileSync(path.join(recDir, 'transcript.txt'), transcript.text);
 
-      // Aggiorna metadata
+      // Aggiorna metadata con flag di trascrizione COMPLETA al 100%
       const metaPath = path.join(recDir, 'metadata.json');
       if (fs.existsSync(metaPath)) {
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
         meta.hasTranscript = true;
+        meta.isCompleteTranscript = true;
+        meta.isLivePreview = false;
+        meta.isTranslated = !!translate;
         fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
       }
 
@@ -383,9 +438,10 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
   });
 });
 
-// ─── IPC: Trascrizione Chunk Live ─────────────────────────────────────────
+// ─── IPC: Trascrizione Chunk Live (Ultra-rapida Metal) ──────────────────────
 ipcMain.handle('transcription:chunk', async (event, { buffer, language, translate }) => {
-  if (!fs.existsSync(MODEL_PATH)) {
+  const currentModelPath = getModelPath();
+  if (!fs.existsSync(currentModelPath)) {
     return { success: false, error: 'Modello non pronto' };
   }
   const whisperBin = getWhisperBinPath();
@@ -394,15 +450,14 @@ ipcMain.handle('transcription:chunk', async (event, { buffer, language, translat
   }
 
   const tmpId = Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-  const tmpWav = path.join(os.tmpdir(), `memo_chunk_${tmpId}.wav`);
-  const tmpOut = path.join(os.tmpdir(), `memo_chunk_out_${tmpId}`);
+  const tmpWav = path.join(os.tmpdir(), `crunch_chunk_${tmpId}.wav`);
+  const tmpOut = path.join(os.tmpdir(), `crunch_chunk_out_${tmpId}`);
 
   try {
     fs.writeFileSync(tmpWav, Buffer.from(buffer));
 
     const args = [
-      '--model', MODEL_PATH,
-      '--language', language || 'it',
+      '--model', currentModelPath,
       '--output-txt',
       '--output-file', tmpOut,
       '--no-timestamps',
@@ -411,7 +466,10 @@ ipcMain.handle('transcription:chunk', async (event, { buffer, language, translat
     ];
 
     if (translate) {
+      args.push('--language', language || 'it');
       args.push('--translate');
+    } else {
+      args.push('--language', language || 'it');
     }
 
     return new Promise((resolve) => {
@@ -514,7 +572,7 @@ ipcMain.handle('folder:create', (event, { name }) => {
     const safeName = name.replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim();
     if (!safeName) return { success: false, error: 'Nome non valido' };
     const folderPath = path.join(RECORDINGS_DIR, safeName);
-    if (fs.existsSync(folderPath)) return { success: false, error: 'Cartella già esistente' };
+    if (fs.existsSync(folderPath)) return { success: false, error: 'Gruppo già esistente' };
     fs.mkdirSync(folderPath, { recursive: true });
     return { success: true, name: safeName };
   } catch (err) {

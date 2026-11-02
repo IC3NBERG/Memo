@@ -1,12 +1,13 @@
 /* ══════════════════════════════════════════════════════════════
-   MEMO — app.js
-   Logica completa con icone SVG ad hoc, Trascrizione Live,
-   Uscita da nota, Ricerca veloce e Navigazione migliorata
+   CRUNCH — app.js
+   Logica completa con icone SVG ad hoc, Trascrizione Live istantanea (3.5s),
+   Verifica Trascrizione Completa al 100%, Traduzione Metal e Gruppi
    ══════════════════════════════════════════════════════════════ */
 
 'use strict';
 
 const ICONS = window.MEMO_ICONS || {};
+const API = window.crunchAPI || window.memoAPI;
 
 // ─── Toast Notifiche (Anti-ridondanza & Debounce) ────────────
 const toastContainer = document.createElement('div');
@@ -101,7 +102,7 @@ const state = {
   showTimestamps: false,
   playerAudio: document.getElementById('hidden-audio'),
 
-  // Trascrizione Live
+  // Trascrizione Live istantanea
   liveTranscriptionEnabled: false,
   liveChunkInterval: null,
   lastLiveChunkIndex: 0,
@@ -176,11 +177,13 @@ const UI = {
   iconMdSlot:          $('icon-md-slot'),
 
   // Barra controlli trascrizione
+  transcribeButtons:   $('transcribe-buttons'),
   btnTranscribeAfter:  $('btn-transcribe-after'),
   btnTranscribeText:   $('btn-transcribe-text'),
   iconTranscribeSlot:  $('icon-transcribe-slot'),
   selectTranscribeMode:$('select-transcribe-mode'),
   iconTranslateSlot:   $('icon-translate-slot'),
+  transcriptStatusBadge: $('transcript-status-badge'),
   transcribeProgress:  $('transcribe-progress'),
   transcribeProgressFill: $('transcribe-progress-fill'),
   transcribeProgressPct:  $('transcribe-progress-pct'),
@@ -190,12 +193,8 @@ const UI = {
   transcriptContent:   $('transcript-content'),
   timestampsMargin:    $('timestamps-margin'),
 
-  // Bottom Bar (Rec & Player)
+  // Bottom Bar (Solo REC e timer)
   btnRec:              $('btn-rec'),
-  btnPause:            $('btn-pause'),
-  iconPauseSlot:       $('icon-pause-slot'),
-  btnStop:             $('btn-stop'),
-  iconStopSlot:        $('icon-stop-slot'),
   recTimer:            $('rec-timer'),
   waveformCanvas:      $('waveform-canvas'),
 
@@ -282,8 +281,6 @@ function injectStaticIcons() {
   if (UI.iconTranscribeSlot) UI.iconTranscribeSlot.innerHTML = ICONS.sparkles;
   if (UI.iconTranslateSlot) UI.iconTranslateSlot.innerHTML = ICONS.translate;
 
-  if (UI.iconPauseSlot) UI.iconPauseSlot.innerHTML = ICONS.pause;
-  if (UI.iconStopSlot) UI.iconStopSlot.innerHTML = ICONS.stop;
   if (UI.iconPlayerPlaySlot) UI.iconPlayerPlaySlot.innerHTML = ICONS.play;
   if (UI.iconVolumeSlot) UI.iconVolumeSlot.innerHTML = ICONS.volume;
 
@@ -318,10 +315,10 @@ async function init() {
   setupUpdaterControls();
 
   // Versione app
-  if (window.memoAPI?.getVersion) {
+  if (API?.getVersion) {
     try {
-      const ver = await window.memoAPI.getVersion();
-      if (UI.appVersionLabel && ver) UI.appVersionLabel.textContent = `Memo v${ver}`;
+      const ver = await API.getVersion();
+      if (UI.appVersionLabel && ver) UI.appVersionLabel.textContent = `Crunch v${ver}`;
     } catch (_) {}
   }
 
@@ -329,7 +326,7 @@ async function init() {
   await refreshLibrary();
 
   // Controllo modello Whisper
-  const modelOk = await window.memoAPI.modelCheck();
+  const modelOk = await API.modelCheck();
   if (modelOk) {
     state.modelReady = true;
   } else {
@@ -407,23 +404,12 @@ function setupSearchControls() {
 // 4. REGISTRAZIONE & AUDIO PIPELINE
 // ══════════════════════════════════════════════════════════════
 function setupRecControls() {
-  // Controlli barra inferiore
+  // Barra inferiore: solo REC (avvia registrazione)
   UI.btnRec.addEventListener('click', () => {
     if (!state.recording) startRecording();
   });
 
-  UI.btnPause.addEventListener('click', () => {
-    if (!state.recording) return;
-    if (state.paused) resumeRecording();
-    else pauseRecording();
-  });
-
-  UI.btnStop.addEventListener('click', () => {
-    if (!state.recording) return;
-    stopRecording();
-  });
-
-  // Controlli centrali durante la registrazione
+  // Controlli centrali durante la registrazione attiva (Pausa e Termina)
   UI.btnCenterPause?.addEventListener('click', () => {
     if (!state.recording) return;
     if (state.paused) resumeRecording();
@@ -500,49 +486,47 @@ async function startRecording() {
     state.lastLiveChunkIndex = 0;
     state.liveTextAccumulated = '';
 
-    // Aggiorna UI: mostra la schermata di registrazione attiva al centro
+    // Mostra la vista centrale di registrazione
     UI.emptyState.classList.add('hidden');
     UI.transcriptView.classList.add('hidden');
-    UI.recordingView.classList.remove('hidden');
+    UI.recordingView?.classList.remove('hidden');
 
+    UI.btnRec.classList.add('recording');
     if (UI.recCenterTimer) UI.recCenterTimer.textContent = '00:00:00';
-    if (UI.toggleCenterLive) UI.toggleCenterLive.checked = state.liveTranscriptionEnabled;
+    if (UI.recTimer) UI.recTimer.textContent = '00:00:00';
     if (UI.centerPauseText) UI.centerPauseText.textContent = 'Pausa';
     if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.pause;
 
-    if (state.liveTranscriptionEnabled) {
-      UI.liveTextContainer?.classList.remove('hidden');
-      UI.liveOffHint?.classList.add('hidden');
-      if (UI.liveStreamText) UI.liveStreamText.innerHTML = '<span class="live-placeholder-text">In ascolto della voce…</span>';
-    } else {
-      UI.liveTextContainer?.classList.add('hidden');
-      UI.liveOffHint?.classList.remove('hidden');
+    if (UI.liveStreamText) {
+      UI.liveStreamText.innerHTML = '<span class="live-placeholder-text">In ascolto della voce…</span>';
     }
-
-    UI.btnRec.classList.add('recording');
-    UI.btnPause.disabled = false;
-    UI.btnStop.disabled = false;
-    showPlayerOrWaveform('waveform');
 
     startTimer();
     drawWaveform();
 
-    // Se la trascrizione live è attiva, avvia il ciclo di trascrizione live
-    if (state.liveTranscriptionEnabled) {
+    // Se il toggle live è abilitato, avvia il loop rapido
+    if (UI.toggleCenterLive?.checked) {
+      state.liveTranscriptionEnabled = true;
+      UI.liveTextContainer?.classList.remove('hidden');
+      UI.liveOffHint?.classList.add('hidden');
       startLiveTranscriptionLoop();
+    } else {
+      state.liveTranscriptionEnabled = false;
+      UI.liveTextContainer?.classList.add('hidden');
+      UI.liveOffHint?.classList.remove('hidden');
     }
 
     showToast('Registrazione avviata', 'info', 1500);
   } catch (err) {
-    showToast('Microfono non disponibile: ' + err.message, 'error', 4000);
+    showToast('Errore microfono: ' + err.message, 'error', 4000);
   }
 }
 
-function buildAudioPipeline(source) {
+function buildAudioPipeline(sourceNode) {
   const ctx = state.audioContext;
-  let node = source;
+  let node = sourceNode;
 
-  // 1. High-pass filter (80Hz)
+  // 1. Filtro passa-alto (80Hz)
   if (UI.toggleHighpass.checked) {
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
@@ -584,8 +568,6 @@ function pauseRecording() {
     state.paused = true;
     clearInterval(state.recTimerInterval);
     clearInterval(state.liveChunkInterval);
-    UI.iconPauseSlot.innerHTML = ICONS.play;
-    UI.btnPause.title = 'Riprendi registrazione';
     UI.btnRec.classList.remove('recording');
 
     if (UI.centerPauseText) UI.centerPauseText.textContent = 'Riprendi';
@@ -603,8 +585,6 @@ function resumeRecording() {
     if (state.liveTranscriptionEnabled) {
       startLiveTranscriptionLoop();
     }
-    UI.iconPauseSlot.innerHTML = ICONS.pause;
-    UI.btnPause.title = 'Metti in pausa';
     UI.btnRec.classList.add('recording');
 
     if (UI.centerPauseText) UI.centerPauseText.textContent = 'Pausa';
@@ -622,9 +602,6 @@ function stopRecording() {
     state.paused = false;
 
     UI.btnRec.classList.remove('recording');
-    UI.btnPause.disabled = true;
-    UI.btnStop.disabled = true;
-    UI.iconPauseSlot.innerHTML = ICONS.pause;
     if (UI.centerPauseText) UI.centerPauseText.textContent = 'Pausa';
     if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.pause;
 
@@ -709,7 +686,7 @@ async function convertToWav(webmBuffer) {
 }
 
 function showSaveNameModal(wavBuffer) {
-  UI.selectRecFolder.innerHTML = '<option value="">— Non categorizzata —</option>';
+  UI.selectRecFolder.innerHTML = '<option value="">— Nessun gruppo —</option>';
   state.library.folders.forEach(f => {
     const opt = document.createElement('option');
     opt.value = f.name;
@@ -726,25 +703,25 @@ function showSaveNameModal(wavBuffer) {
     const folder = UI.selectRecFolder.value || null;
     UI.modalSaveName.classList.add('hidden');
 
-    const result = await window.memoAPI.recordingSave({
+    const result = await API.recordingSave({
       buffer: wavBuffer,
       name,
       folder,
     });
 
     if (result.success) {
-      await window.memoAPI.recordingUpdateDuration({
+      await API.recordingUpdateDuration({
         recDir: result.recDir,
         duration: state.recDuration,
       });
 
-      // Se c'era del testo accumulato dalla trascrizione live, salvalo subito!
+      // Se c'era del testo accumulato dalla trascrizione live, salvalo come anteprima parziale
       if (state.liveTextAccumulated) {
         const transcriptObj = {
           segments: [{ start: 0, end: state.recDuration, text: state.liveTextAccumulated }],
           text: state.liveTextAccumulated
         };
-        await window.memoAPI.transcriptSave({
+        await API.transcriptSave({
           recDir: result.recDir,
           transcript: transcriptObj
         });
@@ -753,7 +730,7 @@ function showSaveNameModal(wavBuffer) {
       showToast(`Registrazione salvata: ${name}`, 'success', 2500);
       await refreshLibrary();
 
-      // Apri automaticamente la registrazione
+      // Apri automaticamente la registrazione appena salvata
       const library = state.library;
       let saved = library.unsorted.find(r => r.recDir === result.recDir);
       if (!saved) {
@@ -762,7 +739,14 @@ function showSaveNameModal(wavBuffer) {
           if (found) { saved = found; break; }
         }
       }
-      if (saved) openRecording(saved);
+      if (saved) {
+        if (state.liveTextAccumulated) {
+          saved.hasTranscript = true;
+          saved.isLivePreview = true;
+          saved.isCompleteTranscript = false;
+        }
+        openRecording(saved);
+      }
     } else {
       showToast('Errore salvataggio: ' + result.error, 'error', 4000);
     }
@@ -863,10 +847,10 @@ function drawWaveform() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 5. TRASCRIZIONE & TRASCRIZIONE LIVE
+// 5. TRASCRIZIONE & TRASCRIZIONE LIVE ISTANTANEA
 // ══════════════════════════════════════════════════════════════
 function setupTranscriptControls() {
-  // Trascrizione nota attiva
+  // Trascrizione / Traduzione nota attiva
   UI.btnTranscribeAfter?.addEventListener('click', () => {
     if (!state.activeRec) return;
     if (!state.modelReady) {
@@ -897,25 +881,55 @@ function setupTranscriptControls() {
     clearTimeout(saveTimeout);
     saveTimeout = setTimeout(() => saveTranscript(), 1500);
   });
+
+  // Registrazione dei listener IPC UNA SOLA VOLTA all'avvio dell'app
+  API.onTranscriptionProgress((pct) => {
+    if (UI.transcribeProgressFill) UI.transcribeProgressFill.style.width = pct + '%';
+    if (UI.transcribeProgressPct) UI.transcribeProgressPct.textContent = pct + '%';
+  });
+
+  API.onTranscriptionDone((transcript) => {
+    state.transcript = transcript;
+    UI.transcribeProgress?.classList.add('hidden');
+    UI.transcribeButtons?.classList.remove('hidden');
+
+    const isTranslate = UI.selectTranscribeMode?.value === 'translate';
+    if (state.activeRec) {
+      state.activeRec.hasTranscript = true;
+      state.activeRec.isCompleteTranscript = true;
+      state.activeRec.isLivePreview = false;
+      state.activeRec.isTranslated = isTranslate;
+    }
+
+    updateTranscriptStatusBadge();
+    renderTranscript();
+    refreshLibrary();
+    showToast(isTranslate ? 'Traduzione in Inglese completata al 100%!' : 'Trascrizione integrale completata al 100%!', 'success', 3000);
+  });
+
+  API.onTranscriptionError((err) => {
+    UI.transcribeProgress?.classList.add('hidden');
+    UI.transcribeButtons?.classList.remove('hidden');
+    showToast('Errore trascrizione: ' + err, 'error', 5000);
+  });
 }
 
-// Loop trascrizione live ogni 12 secondi
+// Loop trascrizione live rapida / istantanea (intervallo 3.5s)
 function startLiveTranscriptionLoop() {
   clearInterval(state.liveChunkInterval);
 
   const isTranslate = UI.selectTranscribeMode?.value === 'translate';
 
-  state.liveChunkInterval = setInterval(async () => {
+  const runChunk = async () => {
     if (!state.recording || state.paused || state.audioChunks.length === 0) return;
 
     try {
-      // Prendi l'audio accumulato
       const blob = new Blob(state.audioChunks, { type: 'audio/webm' });
       const arrayBuffer = await blob.arrayBuffer();
       const wavBuffer = await convertToWav(arrayBuffer);
 
-      // Invia al backend per trascrizione ultra-rapida con GPU Metal
-      const res = await window.memoAPI.transcriptionChunk({
+      // Invia al backend per trascrizione ultra-rapida con GPU Metal (meno di 0.4s)
+      const res = await API.transcriptionChunk({
         buffer: wavBuffer,
         language: 'it',
         translate: isTranslate,
@@ -930,53 +944,69 @@ function startLiveTranscriptionLoop() {
           UI.liveStreamText.scrollTop = UI.liveStreamText.scrollHeight;
         }
 
-        // Se la vista trascrizione è aperta, aggiorna subito il testo a video!
+        // Se la vista trascrizione è aperta, aggiorna subito il testo a video
         if (UI.transcriptContent && (state.activeRec || !UI.transcriptView.classList.contains('hidden'))) {
           UI.transcriptContent.textContent = res.text;
         }
       }
     } catch (_) {}
-  }, 12000);
+  };
+
+  // Esegui ogni 3.5 secondi per dare feedback immediato
+  state.liveChunkInterval = setInterval(runChunk, 3500);
 }
 
 function startTranscription(rec, isTranslate = false) {
   if (!rec || !rec.recDir) return;
 
-  UI.transcribeButtons.classList.add('hidden');
-  UI.transcribeProgress.classList.remove('hidden');
-  UI.transcribeProgressFill.style.width = '0%';
-  UI.transcribeProgressPct.textContent = '0%';
-  UI.transcribeStatusText.textContent = isTranslate ? 'Traduzione con Metal M4…' : 'Trascrizione con Metal M4…';
+  UI.transcribeButtons?.classList.add('hidden');
+  UI.transcribeProgress?.classList.remove('hidden');
+  if (UI.transcribeProgressFill) UI.transcribeProgressFill.style.width = '0%';
+  if (UI.transcribeProgressPct) UI.transcribeProgressPct.textContent = '0%';
+  if (UI.transcribeStatusText) {
+    UI.transcribeStatusText.textContent = isTranslate
+      ? 'Traduzione in corso con GPU Metal…'
+      : 'Decodifica integrale 100% con GPU Metal…';
+  }
 
-  window.memoAPI.transcriptionStart({
+  API.transcriptionStart({
     audioPath: rec.audioPath,
     recDir: rec.recDir,
     language: 'it',
     translate: isTranslate,
   });
+}
 
-  window.memoAPI.onTranscriptionProgress((pct) => {
-    UI.transcribeProgressFill.style.width = pct + '%';
-    UI.transcribeProgressPct.textContent = pct + '%';
-  });
+function updateTranscriptStatusBadge() {
+  if (!UI.transcriptStatusBadge) return;
+  const rec = state.activeRec;
+  if (!rec || !rec.hasTranscript) {
+    UI.transcriptStatusBadge.className = 'transcript-status-badge hidden';
+    UI.transcriptStatusBadge.innerHTML = '';
+    if (UI.btnTranscribeText) UI.btnTranscribeText.textContent = 'Trascrivi';
+    UI.btnTranscribeAfter?.classList.add('highlight');
+    return;
+  }
 
-  window.memoAPI.onTranscriptionDone((transcript) => {
-    state.transcript = transcript;
-    UI.transcribeProgress.classList.add('hidden');
-    UI.transcribeButtons.classList.remove('hidden');
+  UI.transcriptStatusBadge.classList.remove('hidden');
 
-    if (state.activeRec) state.activeRec.hasTranscript = true;
-
-    renderTranscript();
-    refreshLibrary();
-    showToast('Trascrizione completata!', 'success', 3000);
-  });
-
-  window.memoAPI.onTranscriptionError((err) => {
-    UI.transcribeProgress.classList.add('hidden');
-    UI.transcribeButtons.classList.remove('hidden');
-    showToast('Errore trascrizione: ' + err, 'error', 5000);
-  });
+  if (rec.isCompleteTranscript) {
+    if (rec.isTranslated) {
+      UI.transcriptStatusBadge.className = 'transcript-status-badge translated';
+      UI.transcriptStatusBadge.innerHTML = `<span class="memo-icon icon-xs">${ICONS.translate || ''}</span><span>Traduzione Inglese (100% verificata)</span>`;
+    } else {
+      UI.transcriptStatusBadge.className = 'transcript-status-badge verified';
+      UI.transcriptStatusBadge.innerHTML = `<span class="memo-icon icon-xs">${ICONS.check || ''}</span><span>Trascrizione Completa 100% (Verificata)</span>`;
+    }
+    if (UI.btnTranscribeText) UI.btnTranscribeText.textContent = 'Ritrascrivi';
+    UI.btnTranscribeAfter?.classList.remove('highlight');
+  } else {
+    // È un'anteprima Live parziale o non ancora verificata al 100%
+    UI.transcriptStatusBadge.className = 'transcript-status-badge preview';
+    UI.transcriptStatusBadge.innerHTML = `<span class="memo-icon icon-xs">${ICONS.sparkles || ''}</span><span>Anteprima Live (Parziale)</span>`;
+    if (UI.btnTranscribeText) UI.btnTranscribeText.textContent = 'Perfeziona Completa (100%)';
+    UI.btnTranscribeAfter?.classList.add('highlight');
+  }
 }
 
 function renderTranscript() {
@@ -1012,7 +1042,7 @@ async function saveTranscript() {
   if (!state.activeRec || !state.transcript) return;
   const text = UI.transcriptContent.innerText.trim();
   state.transcript.text = text;
-  await window.memoAPI.transcriptSave({
+  await API.transcriptSave({
     recDir: state.activeRec.recDir,
     transcript: state.transcript,
   });
@@ -1021,7 +1051,7 @@ async function saveTranscript() {
 async function exportTranscript(format) {
   if (!state.activeRec) return;
   const text = UI.transcriptContent.innerText.trim();
-  await window.memoAPI.transcriptExport({
+  await API.transcriptExport({
     recDir: state.activeRec.recDir,
     format,
     text,
@@ -1029,10 +1059,10 @@ async function exportTranscript(format) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 6. LIBRERIA & GESTIONE MATERIE
+// 6. LIBRERIA & GESTIONE GRUPPI
 // ══════════════════════════════════════════════════════════════
 async function refreshLibrary() {
-  state.library = await window.memoAPI.libraryGet();
+  state.library = await API.libraryGet();
   renderLibrary();
 }
 
@@ -1042,10 +1072,9 @@ function renderLibrary() {
   const { folders, unsorted } = state.library;
   const query = state.searchQuery;
 
-  // Cartelle materia
+  // Cartelle gruppi
   folders.forEach(folder => {
     const filteredRecordings = filterRecordings(folder.recordings || [], query);
-    // Se c'è ricerca e la cartella corrisponde o ha registrazioni corrispondenti
     const matchesFolder = folder.name.toLowerCase().includes(query);
     if (!query || matchesFolder || filteredRecordings.length > 0) {
       const folderEl = createFolderElement({
@@ -1098,15 +1127,15 @@ function createFolderElement(folder, autoExpand = false) {
   wrap.className = 'folder-wrap';
 
   const header = document.createElement('div');
-  header.className = `folder-item ${autoExpand ? 'expanded' : ''}`;
+  header.className = 'folder-header';
 
-  const arrow = document.createElement('span');
-  arrow.className = 'folder-arrow';
-  arrow.innerHTML = ICONS.chevronRight;
+  const chevron = document.createElement('span');
+  chevron.className = 'folder-chevron';
+  chevron.innerHTML = ICONS.chevronRight;
 
-  const icon = document.createElement('span');
-  icon.className = 'folder-icon';
-  icon.innerHTML = isSystem ? ICONS.inbox : ICONS.folder;
+  const folderIcon = document.createElement('span');
+  folderIcon.className = 'folder-icon';
+  folderIcon.innerHTML = isSystem ? ICONS.folder : ICONS.folder;
 
   const name = document.createElement('span');
   name.className = 'folder-name';
@@ -1116,12 +1145,11 @@ function createFolderElement(folder, autoExpand = false) {
   count.className = 'folder-count';
   count.textContent = recordings.length;
 
-  header.appendChild(arrow);
-  header.appendChild(icon);
+  header.appendChild(chevron);
+  header.appendChild(folderIcon);
   header.appendChild(name);
   header.appendChild(count);
 
-  // Azioni su cartella
   if (!isSystem) {
     const actions = document.createElement('div');
     actions.className = 'folder-actions';
@@ -1129,7 +1157,7 @@ function createFolderElement(folder, autoExpand = false) {
     const renameBtn = document.createElement('button');
     renameBtn.className = 'folder-action-btn';
     renameBtn.title = 'Rinomina gruppo';
-    renameBtn.innerHTML = ICONS.edit;
+    renameBtn.innerHTML = ICONS.pencil;
     renameBtn.onclick = (e) => { e.stopPropagation(); renameFolder(folder.name); };
 
     const deleteBtn = document.createElement('button');
@@ -1143,51 +1171,51 @@ function createFolderElement(folder, autoExpand = false) {
     header.appendChild(actions);
   }
 
-  wrap.appendChild(header);
-
-  // Lista registrazioni
-  const list = document.createElement('div');
-  list.className = `recordings-list ${autoExpand ? '' : 'hidden'}`;
+  const recList = document.createElement('div');
+  recList.className = 'folder-recordings';
 
   recordings.forEach(rec => {
-    const recEl = createRecordingElement(rec, folder.name);
-    list.appendChild(recEl);
+    const recEl = createRecordingElement(rec, isSystem ? null : folder.name);
+    recList.appendChild(recEl);
   });
 
-  wrap.appendChild(list);
+  let isOpen = autoExpand || (recordings.length > 0 && !isSystem);
+  if (isOpen) {
+    wrap.classList.add('open');
+    chevron.classList.add('open');
+  }
 
   header.addEventListener('click', () => {
-    const isExpanded = !list.classList.contains('hidden');
-    list.classList.toggle('hidden', isExpanded);
-    header.classList.toggle('expanded', !isExpanded);
-    // Cambia icona cartella aperta/chiusa se non è inbox
-    if (!isSystem) {
-      icon.innerHTML = !isExpanded ? ICONS.folderOpen : ICONS.folder;
-    }
+    isOpen = !isOpen;
+    wrap.classList.toggle('open', isOpen);
+    chevron.classList.toggle('open', isOpen);
   });
 
+  wrap.appendChild(header);
+  wrap.appendChild(recList);
   return wrap;
 }
 
 function createRecordingElement(rec, folderName) {
   const el = document.createElement('div');
-  el.className = `rec-item ${rec.hasTranscript ? 'has-transcript' : ''}`;
+  el.className = 'rec-item' + (rec.hasTranscript ? ' has-transcript' : '');
+
+  // Preserva selezione attiva
   if (state.activeRec && state.activeRec.recDir === rec.recDir) {
     el.classList.add('active');
   }
 
   const icon = document.createElement('span');
   icon.className = 'rec-item-icon';
-  icon.innerHTML = rec.hasTranscript ? ICONS.document : ICONS.audioWave;
+  icon.innerHTML = rec.hasTranscript ? ICONS.fileText : ICONS.mic;
 
   const info = document.createElement('div');
   info.className = 'rec-item-info';
 
   const nameEl = document.createElement('div');
   nameEl.className = 'rec-item-name';
-  const displayName = rec.name || rec.dirName;
-  nameEl.textContent = displayName;
-  nameEl.title = displayName; // Tooltip sul nome intero se compresso
+  nameEl.textContent = rec.name || rec.dirName;
+  nameEl.title = `${rec.name || rec.dirName}\nData: ${formatDateTime(rec.date) || 'N/D'}\nDurata: ${formatDuration(rec.duration) || '0:00'}`;
 
   const meta = document.createElement('div');
   meta.className = 'rec-item-meta';
@@ -1210,7 +1238,7 @@ function createRecordingElement(rec, folderName) {
   info.appendChild(nameEl);
   info.appendChild(meta);
 
-  // Azioni su registrazione (posizionate in overlay assoluto per preservare dimensioni fisse)
+  // Azioni su registrazione
   const actions = document.createElement('div');
   actions.className = 'rec-item-actions';
 
@@ -1249,11 +1277,6 @@ async function openRecording(rec, folderName) {
   UI.recordingView?.classList.add('hidden');
   UI.transcriptView.classList.remove('hidden');
 
-  // Aggiorna stato pulsante trascrivi
-  if (UI.btnTranscribeText) {
-    UI.btnTranscribeText.textContent = rec.hasTranscript ? 'Ritrascrivi' : 'Trascrivi';
-  }
-
   // Breadcrumb
   const displayFolder = rec.folder || folderName || 'Non categorizzate';
   UI.breadcrumbFolder.textContent = displayFolder === '_unsorted' ? 'Non categorizzate' : displayFolder;
@@ -1272,14 +1295,17 @@ async function openRecording(rec, folderName) {
   UI.transcriptContent.textContent = '';
   UI.timestampsMargin.innerHTML = '';
 
-  const result = await window.memoAPI.transcriptRead({ recDir: rec.recDir });
+  const result = await API.transcriptRead({ recDir: rec.recDir });
   if (result.success && result.transcript) {
     state.transcript = result.transcript;
     renderTranscript();
   }
 
+  // Aggiorna badge e pulsante di trascrizione
+  updateTranscriptStatusBadge();
+
   // Carica audio nel player della barra inferiore
-  const audioResult = await window.memoAPI.audioGetPath({ recDir: rec.recDir });
+  const audioResult = await API.audioGetPath({ recDir: rec.recDir });
   if (audioResult.success) {
     loadAudio(audioResult.audioPath);
   }
@@ -1355,7 +1381,7 @@ function setupModalHandlers() {
   UI.btnFolderConfirm.addEventListener('click', async () => {
     const name = UI.inputFolderName.value.trim();
     if (!name) return;
-    const result = await window.memoAPI.folderCreate({ name });
+    const result = await API.folderCreate({ name });
     UI.modalFolder.classList.add('hidden');
     if (result.success) {
       showToast(`Gruppo "${result.name}" creato`, 'success', 2000);
@@ -1387,7 +1413,7 @@ function setupModalHandlers() {
 async function renameFolder(oldName) {
   const newName = prompt(`Nuovo nome per il gruppo "${oldName}":`, oldName);
   if (!newName || newName === oldName) return;
-  const result = await window.memoAPI.folderRename({ oldName, newName });
+  const result = await API.folderRename({ oldName, newName });
   if (result.success) {
     showToast(`Gruppo rinominato in "${result.name}"`, 'success', 2000);
     await refreshLibrary();
@@ -1398,12 +1424,12 @@ async function renameFolder(oldName) {
 
 function deleteFolder(name) {
   showConfirmModal(
-    `Elimina gruppo "${name}"`,
-    `Le registrazioni contenute saranno spostate in "Non categorizzate". Vuoi continuare?`,
+    'Elimina Gruppo',
+    `Eliminare il gruppo "${name}"? Le registrazioni al suo interno non verranno cancellate ma spostate in "Non categorizzate".`,
     async () => {
-      const result = await window.memoAPI.folderDelete({ name });
+      const result = await API.folderDelete({ name });
       if (result.success) {
-        showToast('Gruppo eliminato', 'success', 2000);
+        showToast(`Gruppo "${name}" eliminato`, 'info', 2000);
         await refreshLibrary();
       } else {
         showToast(result.error, 'error', 3000);
@@ -1415,161 +1441,135 @@ function deleteFolder(name) {
 function showMoveModal(rec) {
   UI.moveFolderList.innerHTML = '';
 
-  const unsortedBtn = document.createElement('button');
-  unsortedBtn.className = 'move-folder-item';
-  unsortedBtn.innerHTML = `<span class="memo-icon">${ICONS.inbox}</span> <span>Non categorizzate</span>`;
-  unsortedBtn.onclick = () => moveRec(rec, null);
-  UI.moveFolderList.appendChild(unsortedBtn);
-
-  state.library.folders.forEach(f => {
-    if (f.name === rec.folder) return;
+  const addOption = (name, label) => {
     const btn = document.createElement('button');
-    btn.className = 'move-folder-item';
-    btn.innerHTML = `<span class="memo-icon">${ICONS.folder}</span> <span>${f.name}</span>`;
-    btn.onclick = () => moveRec(rec, f.name);
+    btn.className = 'move-folder-opt';
+    btn.innerHTML = `<span class="memo-icon icon-sm">${ICONS.folder}</span><span>${label}</span>`;
+    btn.onclick = async () => {
+      UI.modalMove.classList.add('hidden');
+      const result = await API.recordingMove({
+        recDir: rec.recDir,
+        targetFolder: name,
+      });
+      if (result.success) {
+        showToast('Registrazione spostata', 'success', 2000);
+        await refreshLibrary();
+        if (state.activeRec && state.activeRec.recDir === rec.recDir) {
+          state.activeRec.recDir = result.newPath;
+          openRecording(state.activeRec, name);
+        }
+      }
+    };
     UI.moveFolderList.appendChild(btn);
+  };
+
+  addOption(null, 'Non categorizzate');
+  state.library.folders.forEach(f => {
+    if (f.name !== rec.folder) addOption(f.name, f.name);
   });
 
   UI.modalMove.classList.remove('hidden');
   UI.btnMoveCancel.onclick = () => UI.modalMove.classList.add('hidden');
 }
 
-async function moveRec(rec, targetFolder) {
-  UI.modalMove.classList.add('hidden');
-  const result = await window.memoAPI.recordingMove({
-    recDir: rec.recDir,
-    targetFolder,
-  });
-  if (result.success) {
-    showToast(`Spostata in "${targetFolder || 'Non categorizzate'}"`, 'success', 2000);
-    if (state.activeRec && state.activeRec.recDir === rec.recDir) {
-      state.activeRec.recDir = result.newPath;
-      state.activeRec.folder = targetFolder;
-      UI.breadcrumbFolder.textContent = targetFolder || 'Non categorizzate';
-    }
-    await refreshLibrary();
-  } else {
-    showToast(result.error, 'error', 3000);
-  }
-}
-
 function confirmDeleteRecording(rec) {
   showConfirmModal(
-    'Elimina registrazione',
-    `Eliminare "${rec.name || rec.dirName}"? Questa operazione cancellerà sia l'audio che la trascrizione.`,
+    'Elimina Registrazione',
+    `Sei sicuro di voler eliminare "${rec.name || rec.dirName}"? L'azione è irreversibile.`,
     async () => {
-      if (state.activeRec && state.activeRec.recDir === rec.recDir) {
-        closeActiveRecording();
-      }
-      const result = await window.memoAPI.recordingDelete({ recDir: rec.recDir });
+      const result = await API.recordingDelete({ recDir: rec.recDir });
       if (result.success) {
-        showToast('Registrazione eliminata', 'success', 2000);
+        showToast('Registrazione eliminata', 'info', 2000);
+        if (state.activeRec && state.activeRec.recDir === rec.recDir) {
+          closeActiveRecording();
+        }
         await refreshLibrary();
-      } else {
-        showToast(result.error, 'error', 3000);
       }
     }
   );
 }
 
-let confirmCallback = null;
-
-function showConfirmModal(title, message, callback) {
+function showConfirmModal(title, msg, onConfirm) {
   UI.confirmTitle.textContent = title;
-  UI.confirmMessage.textContent = message;
-  confirmCallback = callback;
+  UI.confirmMessage.textContent = msg;
   UI.modalConfirm.classList.remove('hidden');
+  UI.btnConfirmOk.onclick = () => {
+    UI.modalConfirm.classList.add('hidden');
+    onConfirm();
+  };
+  UI.btnConfirmCancel.onclick = () => UI.modalConfirm.classList.add('hidden');
 }
-
-UI.btnConfirmCancel.addEventListener('click', () => {
-  UI.modalConfirm.classList.add('hidden');
-  confirmCallback = null;
-});
-UI.btnConfirmOk.addEventListener('click', () => {
-  UI.modalConfirm.classList.add('hidden');
-  if (confirmCallback) confirmCallback();
-  confirmCallback = null;
-});
 
 // ══════════════════════════════════════════════════════════════
 // 10. RESIZER SIDEBAR
 // ══════════════════════════════════════════════════════════════
 function setupResizer() {
-  const resizer = $('resizer');
   const sidebar = $('sidebar');
+  const resizer = $('resizer');
   let isResizing = false;
-  let startX, startW;
 
   resizer.addEventListener('mousedown', (e) => {
     isResizing = true;
-    startX = e.clientX;
-    startW = sidebar.offsetWidth;
+    resizer.classList.add('dragging');
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   });
 
-  document.addEventListener('mousemove', (e) => {
+  window.addEventListener('mousemove', (e) => {
     if (!isResizing) return;
-    const delta = e.clientX - startX;
-    const newW = Math.max(200, Math.min(420, startW + delta));
+    const newW = Math.min(420, Math.max(200, e.clientX));
     sidebar.style.width = newW + 'px';
   });
 
-  document.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', () => {
     if (isResizing) {
       isResizing = false;
+      resizer.classList.remove('dragging');
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      resizeCanvas();
     }
   });
 }
 
 // ══════════════════════════════════════════════════════════════
-// 11. DOWNLOAD MODELLO
+// 11. DOWNLOAD MODELLO WHISPER
 // ══════════════════════════════════════════════════════════════
 function startModelDownload() {
-  document.body.classList.add('has-banner');
   UI.modelBanner.classList.remove('hidden');
 
-  window.memoAPI.onModelProgress((data) => {
-    const pct = data.percent;
-    UI.modelProgressFill.style.width = pct + '%';
-    UI.modelProgressPct.textContent = pct + '%';
-    const mb = Math.round(data.downloaded / 1024 / 1024);
-    const total = Math.round(data.total / 1024 / 1024);
-    UI.modelBannerDesc.textContent = `Scaricamento modello Whisper AI… ${mb} MB / ${total} MB`;
+  API.onModelProgress((data) => {
+    UI.modelProgressFill.style.width = data.percent + '%';
+    UI.modelProgressPct.textContent = data.percent + '%';
+    const mb = Math.round(data.downloaded / (1024 * 1024));
+    const totalMb = Math.round(data.total / (1024 * 1024));
+    UI.modelBannerDesc.textContent = `Scaricamento modello neurale Large-v3 Turbo: ${mb} MB / ${totalMb} MB…`;
   });
 
-  window.memoAPI.onModelDone(() => {
+  API.onModelDone(() => {
     state.modelReady = true;
-    UI.modelProgressFill.style.width = '100%';
-    UI.modelProgressPct.textContent = '100%';
-    UI.modelBannerDesc.textContent = 'Modello pronto!';
-    setTimeout(() => {
-      UI.modelBanner.classList.add('hidden');
-      document.body.classList.remove('has-banner');
-    }, 2000);
-    showToast('Modello Whisper pronto', 'success', 4000);
+    UI.modelBanner.classList.add('hidden');
+    showToast('Modello Whisper pronto per l\'inferenza Metal!', 'success', 4000);
   });
 
-  window.memoAPI.onModelError((err) => {
-    UI.modelBannerDesc.textContent = `Errore download: ${err}. Riavvia l'app.`;
-    showToast('Errore download modello: ' + err, 'error', 6000);
+  API.onModelError((err) => {
+    UI.modelBannerDesc.textContent = `Errore download: ${err}. Riprova più tardi.`;
+    showToast('Errore nel download del modello Whisper: ' + err, 'error', 6000);
   });
 
-  window.memoAPI.modelDownload();
+  API.modelDownload();
 }
 
 // ══════════════════════════════════════════════════════════════
 // 12. AUTO-UPDATER
 // ══════════════════════════════════════════════════════════════
 function setupUpdaterControls() {
-  if (!window.memoAPI?.onUpdateStatus) return;
+  if (!API?.onUpdateStatus) return;
 
   UI.btnCheckUpdates?.addEventListener('click', async () => {
     showToast('Ricerca aggiornamenti...', 'info', 2000);
     try {
-      const res = await window.memoAPI.checkForUpdates();
+      const res = await API.checkForUpdates();
       if (!res.success && res.message) {
         showToast(res.message, 'info', 3000);
       } else if (!res.success && res.error) {
@@ -1585,10 +1585,10 @@ function setupUpdaterControls() {
   });
 
   UI.btnUpdateAction?.addEventListener('click', () => {
-    window.memoAPI.restartAndInstall();
+    API.restartAndInstall();
   });
 
-  window.memoAPI.onUpdateStatus((info) => {
+  API.onUpdateStatus((info) => {
     if (!info) return;
     if (info.type === 'available') {
       UI.updateBanner?.classList.remove('hidden');
@@ -1601,13 +1601,13 @@ function setupUpdaterControls() {
       if (UI.btnUpdateAction) UI.btnUpdateAction.classList.remove('hidden');
       showToast('Aggiornamento pronto! Clicca "Riavvia e Aggiorna"', 'success', 6000);
     } else if (info.type === 'not-available') {
-      showToast('Memo è già aggiornato all\'ultima versione', 'success', 2500);
+      showToast('Crunch è già aggiornato all\'ultima versione', 'success', 2500);
     } else if (info.type === 'error') {
       showToast(`Aggiornamenti: ${info.message}`, 'error', 3500);
     }
   });
 
-  window.memoAPI.onUpdateProgress?.((p) => {
+  API.onUpdateProgress?.((p) => {
     if (UI.updateBannerText) {
       UI.updateBannerText.textContent = `Scaricamento aggiornamento... ${p.percent}%`;
     }

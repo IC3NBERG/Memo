@@ -2,7 +2,7 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('memoAPI', {
+const api = {
   // Modello Whisper
   modelCheck: () => ipcRenderer.invoke('model:check'),
   modelDownload: () => ipcRenderer.send('model:download'),
@@ -27,7 +27,7 @@ contextBridge.exposeInMainWorld('memoAPI', {
   // Libreria
   libraryGet: () => ipcRenderer.invoke('library:get'),
 
-  // Cartelle
+  // Cartelle / Gruppi
   folderCreate: (data) => ipcRenderer.invoke('folder:create', data),
   folderRename: (data) => ipcRenderer.invoke('folder:rename', data),
   folderDelete: (data) => ipcRenderer.invoke('folder:delete', data),
@@ -50,4 +50,7 @@ contextBridge.exposeInMainWorld('memoAPI', {
   // Finestra
   windowMinimize: () => ipcRenderer.send('window:minimize'),
   windowClose: () => ipcRenderer.send('window:close'),
-});
+};
+
+contextBridge.exposeInMainWorld('memoAPI', api);
+contextBridge.exposeInMainWorld('crunchAPI', api);

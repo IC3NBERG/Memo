@@ -1,6 +1,14 @@
-# 🎙️ Memo
+# 🎙️ Crunch
 
-App macOS per registrare e trascrivere lezioni universitarie. Electron + whisper.cpp (Metal).
+App nativa macOS per registrare, visualizzare e trascrivere lezioni universitarie con accelerazione Metal su Apple Silicon.
+
+## Caratteristiche principali
+
+- **Trascrizione Live istantanea (3.5s)**: campionamento continuo durante la lezione con GPU Apple Metal.
+- **Verifica Completa 100%**: elaborazione ad alta precisione post-lezione del file WAV originale per non perdere alcuna parola o formula.
+- **Traduzione Automatica in Inglese**: motore neurale Whisper multilingua integrato.
+- **Organizzazione a Gruppi**: catalogazione note per materia o progetto con ricerca istantanea.
+- **Privacy Totale**: 100% locale e offline in `~/CrunchRecordings/`.
 
 ## Avvio rapido (sviluppo)
 
@@ -8,61 +16,20 @@ App macOS per registrare e trascrivere lezioni universitarie. Electron + whisper
 npm start
 ```
 
-## Setup produzione: compila whisper-cli reale
+## Setup produzione: compila whisper-cli con Metal
 
 ```bash
-# Installa cmake se non presente
-brew install cmake
-
-# Compila whisper.cpp con Metal (GPU Apple Silicon M4)
+# Compila whisper.cpp con Metal (GPU Apple Silicon)
 npm run build-whisper
 ```
 
-Dopo la compilazione, in `bin/whisper-cli` troverai il vero binario accelerato Metal.  
-Al primo avvio dell'app, il modello `large-v3-turbo` (≈1.5 GB) verrà scaricato automaticamente.
+Il binario compilato risiede in `bin/whisper-cli`.  
+Al primo avvio, il modello `large-v3-turbo` (≈1.5 GB) viene scaricato automaticamente.
 
-## Build DMG finale
+## Build DMG e App
 
 ```bash
 npm run build
 ```
 
-Il DMG sarà in `dist/`.
-
-## Struttura
-
-```
-Memo/
-├── src/
-│   ├── main/
-│   │   ├── main.js       ← Processo principale Electron
-│   │   └── preload.js    ← Bridge sicuro IPC
-│   └── renderer/
-│       ├── index.html    ← UI principale
-│       ├── style.css     ← Design premium dark warm
-│       └── app.js        ← Logica UI completa
-├── assets/
-│   ├── icons/            ← Icona app
-│   └── entitlements.mac.plist
-├── bin/
-│   └── whisper-cli       ← Binario whisper.cpp (compilare con build-whisper)
-└── scripts/
-    ├── build-whisper.sh  ← Compila whisper.cpp con Metal
-    └── generate-icon.sh  ← Genera icona .icns
-```
-
-## File salvati
-
-```
-~/MemoRecordings/
-├── .models/
-│   └── ggml-large-v3-turbo.bin   ← Modello AI (auto-download)
-├── Analisi Matematica/
-│   └── 2024-11-02_Lezione/
-│       ├── audio.wav
-│       ├── transcript.json
-│       ├── transcript.txt
-│       └── metadata.json
-└── _unsorted/                     ← Non categorizzate
-```
-
+Il pacchetto installabile DMG e l'app `Crunch.app` vengono generati in `dist/`.
