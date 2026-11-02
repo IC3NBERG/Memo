@@ -1,11 +1,14 @@
 /* ══════════════════════════════════════════════════════════════
    MEMO — app.js
-   Logica completa: registrazione, trascrizione, libreria, UI
+   Logica completa con icone SVG ad hoc, Trascrizione Live,
+   Uscita da nota, Ricerca veloce e Navigazione migliorata
    ══════════════════════════════════════════════════════════════ */
 
 'use strict';
 
-// ─── Toast ────────────────────────────────────────────────────
+const ICONS = window.MEMO_ICONS || {};
+
+// ─── Toast Notifiche ──────────────────────────────────────────
 const toastContainer = document.createElement('div');
 toastContainer.id = 'toast-container';
 document.body.appendChild(toastContainer);
@@ -13,7 +16,8 @@ document.body.appendChild(toastContainer);
 function showToast(msg, type = 'info', duration = 3000) {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.textContent = msg;
+  const icon = type === 'success' ? ICONS.check : (type === 'error' ? ICONS.close : ICONS.sparkles);
+  el.innerHTML = `<span class="memo-icon icon-sm">${icon || ''}</span><span>${msg}</span>`;
   toastContainer.appendChild(el);
   setTimeout(() => el.remove(), duration);
 }
@@ -45,6 +49,7 @@ function formatDate(iso) {
 // ─── Stato globale ────────────────────────────────────────────
 const state = {
   library: { folders: [], unsorted: [] },
+  searchQuery: '',
   activeRec: null,           // registrazione attiva nella vista
   transcript: null,          // trascrizione caricata
   recording: false,
@@ -58,109 +63,200 @@ const state = {
   analyserNode: null,
   compressorNode: null,
   highpassNode: null,
-  gateNode: null,             // simulato via gain
   streamSource: null,
   micStream: null,
-  savedRecDir: null,          // cartella della registrazione appena salvata
   modelReady: false,
   showTimestamps: false,
   playerAudio: document.getElementById('hidden-audio'),
+
+  // Trascrizione Live
+  liveTranscriptionEnabled: false,
+  liveChunkInterval: null,
+  lastLiveChunkIndex: 0,
+  liveTextAccumulated: '',
 };
 
 // ─── Elementi DOM ─────────────────────────────────────────────
-const $  = (id) => document.getElementById(id);
+const $ = (id) => document.getElementById(id);
 
 const UI = {
+  // Titlebar
+  brandIconSlot:       $('brand-icon-slot'),
+
+  // Banners
   modelBanner:         $('model-banner'),
+  modelIconSlot:       $('model-icon-slot'),
   modelProgressFill:   $('model-progress-fill'),
   modelProgressPct:    $('model-progress-pct'),
   modelBannerDesc:     $('model-banner-desc'),
 
+  updateBanner:        $('update-banner'),
+  updateIconSlot:      $('update-icon-slot'),
+  updateBannerText:    $('update-banner-text'),
+  btnUpdateAction:     $('btn-update-action'),
+  btnUpdateDismiss:    $('btn-update-dismiss'),
+
+  // Sidebar
+  btnNewFolder:        $('btn-new-folder'),
+  iconNewFolderSlot:   $('icon-new-folder-slot'),
+  searchInput:         $('search-input'),
+  searchIconSlot:      $('search-icon-slot'),
+  btnClearSearch:      $('btn-clear-search'),
   libraryTree:         $('library-tree'),
+  appVersionLabel:     $('app-version-label'),
+  btnCheckUpdates:     $('btn-check-updates'),
+  iconUpdateSlot:      $('icon-update-slot'),
+
+  // Area centrale
   emptyState:          $('empty-state'),
+  emptyIconSlot:       $('empty-icon-slot'),
+  emptyRecIconSlot:    $('empty-rec-icon-slot'),
+  btnEmptyNewRec:      $('btn-empty-new-rec'),
   transcriptView:      $('transcript-view'),
 
+  // Toolbar trascrizione
+  btnCloseNote:        $('btn-close-note'),
+  iconBackSlot:        $('icon-back-slot'),
+  breadcrumbFolder:    $('breadcrumb-folder'),
   recNameLabel:        $('rec-name-label'),
   toggleTimestamps:    $('toggle-timestamps'),
+  iconClockSlot:       $('icon-clock-slot'),
   btnCopyAll:          $('btn-copy-all'),
+  iconCopySlot:        $('icon-copy-slot'),
   btnExportTxt:        $('btn-export-txt'),
+  iconTxtSlot:         $('icon-txt-slot'),
   btnExportMd:         $('btn-export-md'),
+  iconMdSlot:          $('icon-md-slot'),
 
-  transcribeButtons:   $('transcribe-buttons'),
+  // Barra controlli trascrizione
+  btnTranscribeLive:   $('btn-transcribe-live'),
+  iconLiveSlot:        $('icon-live-slot'),
+  liveTranscribeText:  $('live-transcribe-text'),
+  btnTranscribeAfter:  $('btn-transcribe-after'),
+  iconTranscribeSlot:  $('icon-transcribe-slot'),
+  selectTranscribeMode:$('select-transcribe-mode'),
+  iconTranslateSlot:   $('icon-translate-slot'),
+  liveIndicatorBadge:  $('live-indicator-badge'),
+  liveIndicatorText:   $('live-indicator-text'),
   transcribeProgress:  $('transcribe-progress'),
   transcribeProgressFill: $('transcribe-progress-fill'),
   transcribeProgressPct:  $('transcribe-progress-pct'),
   transcribeStatusText:   $('transcribe-status-text'),
-  btnTranscribeLive:   $('btn-transcribe-live'),
-  btnTranscribeAfter:  $('btn-transcribe-after'),
 
+  // Editor trascrizione
   transcriptContent:   $('transcript-content'),
   timestampsMargin:    $('timestamps-margin'),
 
+  // Bottom Bar (Rec & Player)
   btnRec:              $('btn-rec'),
   btnPause:            $('btn-pause'),
+  iconPauseSlot:       $('icon-pause-slot'),
   btnStop:             $('btn-stop'),
+  iconStopSlot:        $('icon-stop-slot'),
   recTimer:            $('rec-timer'),
   waveformCanvas:      $('waveform-canvas'),
 
-  recControls:         $('rec-controls'),
   playerControls:      $('player-controls'),
   btnPlayPause:        $('btn-play-pause'),
+  iconPlayerPlaySlot:  $('icon-player-play-slot'),
   playerSeek:          $('player-seek'),
   playerTime:          $('player-time'),
   playerVolume:        $('player-volume'),
+  iconVolumeSlot:      $('icon-volume-slot'),
 
+  // Preprocessing toggles
   toggleHighpass:      $('toggle-highpass'),
+  checkHpSlot:         $('check-hp-slot'),
   toggleNoisegate:     $('toggle-noisegate'),
+  checkNgSlot:         $('check-ng-slot'),
   toggleCompressor:    $('toggle-compressor'),
+  checkCompSlot:       $('check-comp-slot'),
   toggleAutogain:      $('toggle-autogain'),
+  checkGainSlot:       $('check-gain-slot'),
 
-  btnNewFolder:        $('btn-new-folder'),
-
+  // Modali
   modalFolder:         $('modal-folder'),
+  modalNewFolderIconSlot: $('modal-newfolder-icon-slot'),
   inputFolderName:     $('input-folder-name'),
   btnFolderCancel:     $('btn-folder-cancel'),
   btnFolderConfirm:    $('btn-folder-confirm'),
 
   modalMove:           $('modal-move'),
+  modalMoveIconSlot:   $('modal-move-icon-slot'),
   moveFolderList:      $('move-folder-list'),
   btnMoveCancel:       $('btn-move-cancel'),
 
   modalConfirm:        $('modal-confirm'),
+  modalTrashIconSlot:  $('modal-trash-icon-slot'),
   confirmTitle:        $('confirm-title'),
   confirmMessage:      $('confirm-message'),
   btnConfirmCancel:    $('btn-confirm-cancel'),
   btnConfirmOk:        $('btn-confirm-ok'),
 
   modalSaveName:       $('modal-save-name'),
+  modalRecIconSlot:    $('modal-rec-icon-slot'),
   inputRecName:        $('input-rec-name'),
   selectRecFolder:     $('select-rec-folder'),
   btnSaveCancel:       $('btn-save-cancel'),
   btnSaveConfirm:      $('btn-save-confirm'),
-
-  updateBanner:        $('update-banner'),
-  updateBannerText:    $('update-banner-text'),
-  btnUpdateAction:     $('btn-update-action'),
-  btnUpdateDismiss:    $('btn-update-dismiss'),
-  appVersionLabel:     $('app-version-label'),
-  btnCheckUpdates:     $('btn-check-updates'),
 };
 
 // ══════════════════════════════════════════════════════════════
-// 1. AVVIO — Controllo modello e libreria
+// 1. INIEZIONE ICONE SVG AD HOC
+// ══════════════════════════════════════════════════════════════
+function injectStaticIcons() {
+  if (UI.brandIconSlot) UI.brandIconSlot.innerHTML = ICONS.mic;
+  if (UI.modelIconSlot) UI.modelIconSlot.innerHTML = ICONS.cpu;
+  if (UI.updateIconSlot) UI.updateIconSlot.innerHTML = ICONS.sparkles;
+  if (UI.iconNewFolderSlot) UI.iconNewFolderSlot.innerHTML = ICONS.folderPlus;
+  if (UI.searchIconSlot) UI.searchIconSlot.innerHTML = ICONS.search;
+  if (UI.iconUpdateSlot) UI.iconUpdateSlot.innerHTML = ICONS.refresh;
+
+  if (UI.emptyIconSlot) UI.emptyIconSlot.innerHTML = ICONS.audioWave;
+  if (UI.emptyRecIconSlot) UI.emptyRecIconSlot.innerHTML = ICONS.mic;
+
+  if (UI.iconBackSlot) UI.iconBackSlot.innerHTML = ICONS.back;
+  if (UI.iconClockSlot) UI.iconClockSlot.innerHTML = ICONS.clock;
+  if (UI.iconCopySlot) UI.iconCopySlot.innerHTML = ICONS.copy;
+  if (UI.iconTxtSlot) UI.iconTxtSlot.innerHTML = ICONS.download;
+  if (UI.iconMdSlot) UI.iconMdSlot.innerHTML = ICONS.download;
+
+  if (UI.iconLiveSlot) UI.iconLiveSlot.innerHTML = ICONS.micLive;
+  if (UI.iconTranscribeSlot) UI.iconTranscribeSlot.innerHTML = ICONS.sparkles;
+  if (UI.iconTranslateSlot) UI.iconTranslateSlot.innerHTML = ICONS.translate;
+
+  if (UI.iconPauseSlot) UI.iconPauseSlot.innerHTML = ICONS.pause;
+  if (UI.iconStopSlot) UI.iconStopSlot.innerHTML = ICONS.stop;
+  if (UI.iconPlayerPlaySlot) UI.iconPlayerPlaySlot.innerHTML = ICONS.play;
+  if (UI.iconVolumeSlot) UI.iconVolumeSlot.innerHTML = ICONS.volume;
+
+  [UI.checkHpSlot, UI.checkNgSlot, UI.checkCompSlot, UI.checkGainSlot].forEach(slot => {
+    if (slot) slot.innerHTML = ICONS.check;
+  });
+
+  if (UI.modalNewFolderIconSlot) UI.modalNewFolderIconSlot.innerHTML = ICONS.folderPlus;
+  if (UI.modalMoveIconSlot) UI.modalMoveIconSlot.innerHTML = ICONS.move;
+  if (UI.modalTrashIconSlot) UI.modalTrashIconSlot.innerHTML = ICONS.trash;
+  if (UI.modalRecIconSlot) UI.modalRecIconSlot.innerHTML = ICONS.mic;
+}
+
+// ══════════════════════════════════════════════════════════════
+// 2. AVVIO & SETUP
 // ══════════════════════════════════════════════════════════════
 async function init() {
-  setupWindowControls();
+  injectStaticIcons();
   setupResizer();
   setupRecControls();
   setupTranscriptControls();
   setupPlayerControls();
   setupModalHandlers();
+  setupSearchControls();
   setupWaveform();
+  setupKeyboardNavigation();
   setupUpdaterControls();
 
-  // Carica versione
-  if (window.memoAPI.getVersion) {
+  // Versione app
+  if (window.memoAPI?.getVersion) {
     try {
       const ver = await window.memoAPI.getVersion();
       if (UI.appVersionLabel && ver) UI.appVersionLabel.textContent = `Memo v${ver}`;
@@ -170,111 +266,93 @@ async function init() {
   // Carica libreria
   await refreshLibrary();
 
-  // Controlla modello
+  // Controllo modello Whisper
   const modelOk = await window.memoAPI.modelCheck();
   if (modelOk) {
     state.modelReady = true;
-    showToast('✅ Modello Whisper pronto', 'success', 2000);
   } else {
     startModelDownload();
   }
 }
 
-function setupUpdaterControls() {
-  if (!window.memoAPI.onUpdateStatus) return;
+// ══════════════════════════════════════════════════════════════
+// 3. NAVIGAZIONE & USCITA DA NOTA
+// ══════════════════════════════════════════════════════════════
+function closeActiveRecording() {
+  if (!state.activeRec) return;
 
-  UI.btnCheckUpdates?.addEventListener('click', async () => {
-    showToast('🔍 Ricerca aggiornamenti...', 'info', 2000);
-    const res = await window.memoAPI.checkForUpdates();
-    if (!res.success && res.message) {
-      showToast(res.message, 'info', 3000);
+  // Salva eventuali modifiche
+  saveTranscript();
+
+  // Ferma player audio se in riproduzione
+  if (state.playerAudio && !state.playerAudio.paused) {
+    state.playerAudio.pause();
+    state.playerAudio.currentTime = 0;
+  }
+  showPlayerOrWaveform('waveform');
+
+  // Deseleziona visivamente nella sidebar
+  document.querySelectorAll('.rec-item').forEach(el => el.classList.remove('active'));
+
+  // Reset stato attivo
+  state.activeRec = null;
+  state.transcript = null;
+
+  // Mostra schermata vuota / home
+  UI.transcriptView.classList.add('hidden');
+  UI.emptyState.classList.remove('hidden');
+
+  showToast('Nota chiusa', 'info', 1500);
+}
+
+function setupKeyboardNavigation() {
+  document.addEventListener('keydown', (e) => {
+    // Esc: Chiudi modal se aperto, altrimenti esci dalla nota
+    if (e.key === 'Escape') {
+      const openModal = document.querySelector('.modal-overlay:not(.hidden)');
+      if (openModal) {
+        openModal.classList.add('hidden');
+        return;
+      }
+      if (state.activeRec && !state.recording) {
+        closeActiveRecording();
+      }
     }
   });
 
-  UI.btnUpdateDismiss?.addEventListener('click', () => {
-    UI.updateBanner?.classList.add('hidden');
+  UI.btnCloseNote?.addEventListener('click', closeActiveRecording);
+  UI.btnEmptyNewRec?.addEventListener('click', () => {
+    if (!state.recording) startRecording();
+  });
+}
+
+function setupSearchControls() {
+  UI.searchInput?.addEventListener('input', () => {
+    state.searchQuery = UI.searchInput.value.trim().toLowerCase();
+    UI.btnClearSearch?.classList.toggle('hidden', !state.searchQuery);
+    renderLibrary();
   });
 
-  UI.btnUpdateAction?.addEventListener('click', () => {
-    window.memoAPI.restartAndInstall();
-  });
-
-  window.memoAPI.onUpdateStatus((info) => {
-    if (info.type === 'available') {
-      UI.updateBanner?.classList.remove('hidden');
-      if (UI.updateBannerText) UI.updateBannerText.textContent = info.message;
-      if (UI.btnUpdateAction) UI.btnUpdateAction.classList.add('hidden');
-      showToast(`✨ ${info.message}`, 'info', 4000);
-    } else if (info.type === 'downloaded') {
-      UI.updateBanner?.classList.remove('hidden');
-      if (UI.updateBannerText) UI.updateBannerText.textContent = info.message;
-      if (UI.btnUpdateAction) UI.btnUpdateAction.classList.remove('hidden');
-      showToast('🎉 Aggiornamento pronto! Clicca "Riavvia e Aggiorna"', 'success', 6000);
-    } else if (info.type === 'not-available') {
-      showToast('✅ Memo è già aggiornato', 'success', 2500);
-    }
-  });
-
-  window.memoAPI.onUpdateProgress?.((p) => {
-    if (UI.updateBannerText) {
-      UI.updateBannerText.textContent = `Scaricamento aggiornamento... ${p.percent}%`;
-    }
+  UI.btnClearSearch?.addEventListener('click', () => {
+    UI.searchInput.value = '';
+    state.searchQuery = '';
+    UI.btnClearSearch.classList.add('hidden');
+    renderLibrary();
   });
 }
 
 // ══════════════════════════════════════════════════════════════
-// 2. DOWNLOAD MODELLO
-// ══════════════════════════════════════════════════════════════
-function startModelDownload() {
-  document.body.classList.add('has-banner');
-  UI.modelBanner.classList.remove('hidden');
-
-  window.memoAPI.onModelProgress((data) => {
-    const pct = data.percent;
-    UI.modelProgressFill.style.width = pct + '%';
-    UI.modelProgressPct.textContent = pct + '%';
-    const mb = Math.round(data.downloaded / 1024 / 1024);
-    const total = Math.round(data.total / 1024 / 1024);
-    UI.modelBannerDesc.textContent = `Scaricamento modello Whisper AI… ${mb} MB / ${total} MB`;
-  });
-
-  window.memoAPI.onModelDone(() => {
-    state.modelReady = true;
-    UI.modelProgressFill.style.width = '100%';
-    UI.modelProgressPct.textContent = '100%';
-    UI.modelBannerDesc.textContent = 'Modello pronto! 🎉';
-    setTimeout(() => {
-      UI.modelBanner.classList.add('hidden');
-      document.body.classList.remove('has-banner');
-    }, 2000);
-    showToast('✅ Modello Whisper scaricato e pronto!', 'success', 4000);
-  });
-
-  window.memoAPI.onModelError((err) => {
-    UI.modelBannerDesc.textContent = `Errore download: ${err}. Riavvia l'app.`;
-    showToast('❌ Errore download modello: ' + err, 'error', 6000);
-  });
-
-  window.memoAPI.modelDownload();
-}
-
-// ══════════════════════════════════════════════════════════════
-// 3. REGISTRAZIONE AUDIO
+// 4. REGISTRAZIONE & AUDIO PIPELINE
 // ══════════════════════════════════════════════════════════════
 function setupRecControls() {
   UI.btnRec.addEventListener('click', () => {
-    if (!state.recording) {
-      startRecording();
-    }
+    if (!state.recording) startRecording();
   });
 
   UI.btnPause.addEventListener('click', () => {
     if (!state.recording) return;
-    if (state.paused) {
-      resumeRecording();
-    } else {
-      pauseRecording();
-    }
+    if (state.paused) resumeRecording();
+    else pauseRecording();
   });
 
   UI.btnStop.addEventListener('click', () => {
@@ -300,15 +378,15 @@ async function startRecording() {
     const source = state.audioContext.createMediaStreamSource(stream);
     state.streamSource = source;
 
-    // Pipeline di preprocessing
+    // Pipeline audio avanzata
     const chain = buildAudioPipeline(source);
 
-    // Analyser per waveform (sempre dopo la pipeline)
+    // Analyser per Waveform
     state.analyserNode = state.audioContext.createAnalyser();
     state.analyserNode.fftSize = 256;
     chain.connect(state.analyserNode);
 
-    // Destination per registrazione
+    // Destination per MediaRecorder
     const dest = state.audioContext.createMediaStreamDestination();
     chain.connect(dest);
 
@@ -321,16 +399,16 @@ async function startRecording() {
       if (e.data.size > 0) state.audioChunks.push(e.data);
     };
 
-    state.mediaRecorder.start(100); // chunk ogni 100ms
+    state.mediaRecorder.start(100);
 
     state.recording = true;
     state.paused = false;
     state.recDuration = 0;
-    state.savedRecDir = null;
+    state.lastLiveChunkIndex = 0;
+    state.liveTextAccumulated = '';
 
     // Aggiorna UI
     UI.btnRec.classList.add('recording');
-    UI.btnRec.querySelector('.rec-dot').style.display = 'inline-block';
     UI.btnPause.disabled = false;
     UI.btnStop.disabled = false;
     showPlayerOrWaveform('waveform');
@@ -338,9 +416,14 @@ async function startRecording() {
     startTimer();
     drawWaveform();
 
-    showToast('🔴 Registrazione avviata', 'info', 1500);
+    // Se la trascrizione live è attiva, avvia il ciclo di trascrizione live
+    if (state.liveTranscriptionEnabled) {
+      startLiveTranscriptionLoop();
+    }
+
+    showToast('Registrazione avviata', 'info', 1500);
   } catch (err) {
-    showToast('❌ Microfono non disponibile: ' + err.message, 'error', 4000);
+    showToast('Microfono non disponibile: ' + err.message, 'error', 4000);
   }
 }
 
@@ -362,7 +445,7 @@ function buildAudioPipeline(source) {
   // 2. Compressore dinamico
   if (UI.toggleCompressor.checked) {
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -50;
+    comp.threshold.value = -48;
     comp.knee.value = 10;
     comp.ratio.value = 6;
     comp.attack.value = 0.003;
@@ -372,10 +455,10 @@ function buildAudioPipeline(source) {
     state.compressorNode = comp;
   }
 
-  // 3. Auto-gain (GainNode con gain elevato per voci distanti)
+  // 3. Auto-gain adattivo
   if (UI.toggleAutogain.checked) {
     const gain = ctx.createGain();
-    gain.gain.value = 2.5;
+    gain.gain.value = 2.4;
     node.connect(gain);
     node = gain;
     state.gainNode = gain;
@@ -389,10 +472,11 @@ function pauseRecording() {
     state.mediaRecorder.pause();
     state.paused = true;
     clearInterval(state.recTimerInterval);
-    UI.btnPause.textContent = '▶';
-    UI.btnPause.title = 'Riprendi';
+    clearInterval(state.liveChunkInterval);
+    UI.iconPauseSlot.innerHTML = ICONS.play;
+    UI.btnPause.title = 'Riprendi registrazione';
     UI.btnRec.classList.remove('recording');
-    showToast('⏸ Registrazione in pausa', 'info', 1500);
+    showToast('Registrazione in pausa', 'info', 1500);
   }
 }
 
@@ -401,23 +485,28 @@ function resumeRecording() {
     state.mediaRecorder.resume();
     state.paused = false;
     startTimer();
-    UI.btnPause.textContent = '⏸';
-    UI.btnPause.title = 'Pausa';
+    if (state.liveTranscriptionEnabled) {
+      startLiveTranscriptionLoop();
+    }
+    UI.iconPauseSlot.innerHTML = ICONS.pause;
+    UI.btnPause.title = 'Metti in pausa';
     UI.btnRec.classList.add('recording');
-    showToast('🔴 Registrazione ripresa', 'info', 1500);
+    showToast('Registrazione ripresa', 'info', 1500);
   }
 }
 
 function stopRecording() {
   return new Promise((resolve) => {
     clearInterval(state.recTimerInterval);
+    clearInterval(state.liveChunkInterval);
     state.recording = false;
     state.paused = false;
 
     UI.btnRec.classList.remove('recording');
     UI.btnPause.disabled = true;
     UI.btnStop.disabled = true;
-    UI.btnPause.textContent = '⏸';
+    UI.iconPauseSlot.innerHTML = ICONS.pause;
+    UI.liveIndicatorBadge.classList.add('hidden');
 
     if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
       state.mediaRecorder.onstop = async () => {
@@ -445,27 +534,21 @@ async function saveRecording() {
   if (state.audioChunks.length === 0) return;
 
   try {
-    // Converti WebM/Opus → ArrayBuffer
     const blob = new Blob(state.audioChunks, { type: 'audio/webm' });
     const arrayBuffer = await blob.arrayBuffer();
-
-    // Converti in WAV tramite AudioContext offline
     const wavBuffer = await convertToWav(arrayBuffer);
 
-    // Mostra modal per il nome
     showSaveNameModal(wavBuffer);
   } catch (err) {
-    showToast('❌ Errore nel salvataggio: ' + err.message, 'error', 4000);
+    showToast('Errore nel salvataggio: ' + err.message, 'error', 4000);
   }
 }
 
 async function convertToWav(webmBuffer) {
-  // Usa un AudioContext temporaneo per decodificare e ricodificare come WAV
   const tmpCtx = new AudioContext({ sampleRate: 16000 });
   const decoded = await tmpCtx.decodeAudioData(webmBuffer.slice(0));
   await tmpCtx.close();
 
-  // Crea WAV manualmente
   const numChannels = 1;
   const sampleRate = decoded.sampleRate;
   const samples = decoded.getChannelData(0);
@@ -483,8 +566,8 @@ async function convertToWav(webmBuffer) {
   view.setUint32(4, 36 + samples.length * bytesPerSample, true);
   writeStr(8, 'WAVE');
   writeStr(12, 'fmt ');
-  view.setUint32(16, 16, true);           // chunk size
-  view.setUint16(20, 1, true);            // PCM
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * blockAlign, true);
@@ -504,7 +587,6 @@ async function convertToWav(webmBuffer) {
 }
 
 function showSaveNameModal(wavBuffer) {
-  // Aggiorna la select con le cartelle disponibili
   UI.selectRecFolder.innerHTML = '<option value="">— Non categorizzata —</option>';
   state.library.folders.forEach(f => {
     const opt = document.createElement('option');
@@ -529,16 +611,27 @@ function showSaveNameModal(wavBuffer) {
     });
 
     if (result.success) {
-      state.savedRecDir = result.recDir;
-      // Aggiorna durata
       await window.memoAPI.recordingUpdateDuration({
         recDir: result.recDir,
         duration: state.recDuration,
       });
-      showToast(`✅ Registrazione salvata: ${name}`, 'success', 2500);
+
+      // Se c'era del testo accumulato dalla trascrizione live, salvalo subito!
+      if (state.liveTextAccumulated) {
+        const transcriptObj = {
+          segments: [{ start: 0, end: state.recDuration, text: state.liveTextAccumulated }],
+          text: state.liveTextAccumulated
+        };
+        await window.memoAPI.transcriptSave({
+          recDir: result.recDir,
+          transcript: transcriptObj
+        });
+      }
+
+      showToast(`Registrazione salvata: ${name}`, 'success', 2500);
       await refreshLibrary();
 
-      // Apri automaticamente la registrazione appena salvata
+      // Apri automaticamente la registrazione
       const library = state.library;
       let saved = library.unsorted.find(r => r.recDir === result.recDir);
       if (!saved) {
@@ -549,7 +642,7 @@ function showSaveNameModal(wavBuffer) {
       }
       if (saved) openRecording(saved);
     } else {
-      showToast('❌ Errore salvataggio: ' + result.error, 'error', 4000);
+      showToast('Errore salvataggio: ' + result.error, 'error', 4000);
     }
 
     showPlayerOrWaveform('waveform');
@@ -578,8 +671,6 @@ function startTimer() {
 }
 
 // ─── Waveform ─────────────────────────────────────────────────
-let waveAnimFrame;
-
 function setupWaveform() {
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
@@ -588,6 +679,7 @@ function setupWaveform() {
 function resizeCanvas() {
   const canvas = UI.waveformCanvas;
   const wrap = canvas.parentElement;
+  if (!wrap) return;
   canvas.width = wrap.offsetWidth * window.devicePixelRatio;
   canvas.height = wrap.offsetHeight * window.devicePixelRatio;
   canvas.style.width = wrap.offsetWidth + 'px';
@@ -602,7 +694,6 @@ function drawWaveform() {
   const analyser = state.analyserNode;
 
   if (!analyser || !state.recording) {
-    // Disegna piatta se non sta registrando
     ctx.clearRect(0, 0, W, H);
     ctx.strokeStyle = '#3F3228';
     ctx.lineWidth = 1 * window.devicePixelRatio;
@@ -613,7 +704,7 @@ function drawWaveform() {
     return;
   }
 
-  waveAnimFrame = requestAnimationFrame(drawWaveform);
+  requestAnimationFrame(drawWaveform);
 
   const bufLen = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufLen);
@@ -621,7 +712,6 @@ function drawWaveform() {
 
   ctx.clearRect(0, 0, W, H);
 
-  // Disegna la forma d'onda con gradiente ambra
   const grad = ctx.createLinearGradient(0, 0, W, 0);
   grad.addColorStop(0, '#D4723C');
   grad.addColorStop(0.5, '#E8A849');
@@ -650,16 +740,34 @@ function drawWaveform() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 4. TRASCRIZIONE
+// 5. TRASCRIZIONE & TRASCRIZIONE LIVE
 // ══════════════════════════════════════════════════════════════
 function setupTranscriptControls() {
+  // Toggle Trascrizione Live
+  UI.btnTranscribeLive.addEventListener('click', () => {
+    state.liveTranscriptionEnabled = !state.liveTranscriptionEnabled;
+    UI.btnTranscribeLive.classList.toggle('active', state.liveTranscriptionEnabled);
+    if (state.liveTranscriptionEnabled) {
+      showToast('Trascrizione Live ATTIVA durante la registrazione', 'success', 3000);
+      if (state.recording && !state.paused) {
+        startLiveTranscriptionLoop();
+      }
+    } else {
+      clearInterval(state.liveChunkInterval);
+      UI.liveIndicatorBadge.classList.add('hidden');
+      showToast('Trascrizione Live disattivata', 'info', 2000);
+    }
+  });
+
+  // Trascrizione post-registrazione
   UI.btnTranscribeAfter.addEventListener('click', () => {
     if (!state.activeRec) return;
     if (!state.modelReady) {
-      showToast('⏳ Attendere: il modello Whisper è ancora in download…', 'info', 3000);
+      showToast('Attendere: modello Whisper in caricamento...', 'info', 3000);
       return;
     }
-    startTranscription(state.activeRec);
+    const mode = UI.selectTranscribeMode.value; // 'transcribe' | 'translate'
+    startTranscription(state.activeRec, mode === 'translate');
   });
 
   UI.toggleTimestamps.addEventListener('change', () => {
@@ -670,13 +778,13 @@ function setupTranscriptControls() {
   UI.btnCopyAll.addEventListener('click', () => {
     const text = UI.transcriptContent.innerText.trim();
     if (!text) { showToast('Nessun testo da copiare', 'info', 1500); return; }
-    navigator.clipboard.writeText(text).then(() => showToast('📋 Testo copiato!', 'success', 1500));
+    navigator.clipboard.writeText(text).then(() => showToast('Testo copiato negli appunti!', 'success', 1500));
   });
 
   UI.btnExportTxt.addEventListener('click', () => exportTranscript('txt'));
   UI.btnExportMd.addEventListener('click', () => exportTranscript('md'));
 
-  // Salva automaticamente quando l'utente modifica il testo
+  // Auto-salvataggio testo modificato
   let saveTimeout;
   UI.transcriptContent.addEventListener('input', () => {
     clearTimeout(saveTimeout);
@@ -684,19 +792,55 @@ function setupTranscriptControls() {
   });
 }
 
-function startTranscription(rec) {
+// Loop trascrizione live ogni 12 secondi
+function startLiveTranscriptionLoop() {
+  clearInterval(state.liveChunkInterval);
+
+  UI.liveIndicatorBadge.classList.remove('hidden');
+  const isTranslate = UI.selectTranscribeMode.value === 'translate';
+  UI.liveIndicatorText.textContent = isTranslate ? 'Traduzione Live in corso…' : 'Trascrizione Live in corso…';
+
+  state.liveChunkInterval = setInterval(async () => {
+    if (!state.recording || state.paused || state.audioChunks.length === 0) return;
+
+    try {
+      // Prendi l'audio accumulato
+      const blob = new Blob(state.audioChunks, { type: 'audio/webm' });
+      const arrayBuffer = await blob.arrayBuffer();
+      const wavBuffer = await convertToWav(arrayBuffer);
+
+      // Invia al backend per trascrizione ultra-rapida con GPU Metal
+      const res = await window.memoAPI.transcriptionChunk({
+        buffer: wavBuffer,
+        language: 'it',
+        translate: isTranslate,
+      });
+
+      if (res.success && res.text) {
+        state.liveTextAccumulated = res.text;
+        // Se la vista trascrizione è aperta, aggiorna subito il testo a video!
+        if (state.activeRec || !UI.transcriptView.classList.contains('hidden')) {
+          UI.transcriptContent.textContent = res.text;
+        }
+      }
+    } catch (_) {}
+  }, 12000);
+}
+
+function startTranscription(rec, isTranslate = false) {
   if (!rec || !rec.recDir) return;
 
-  // Mostra progress
   UI.transcribeButtons.classList.add('hidden');
   UI.transcribeProgress.classList.remove('hidden');
   UI.transcribeProgressFill.style.width = '0%';
   UI.transcribeProgressPct.textContent = '0%';
-  UI.transcribeStatusText.textContent = 'Analisi audio in corso…';
+  UI.transcribeStatusText.textContent = isTranslate ? 'Traduzione con Metal M4…' : 'Trascrizione con Metal M4…';
 
   window.memoAPI.transcriptionStart({
     audioPath: rec.audioPath,
     recDir: rec.recDir,
+    language: 'it',
+    translate: isTranslate,
   });
 
   window.memoAPI.onTranscriptionProgress((pct) => {
@@ -709,18 +853,17 @@ function startTranscription(rec) {
     UI.transcribeProgress.classList.add('hidden');
     UI.transcribeButtons.classList.remove('hidden');
 
-    // Aggiorna rec locale
     if (state.activeRec) state.activeRec.hasTranscript = true;
 
     renderTranscript();
     refreshLibrary();
-    showToast('✅ Trascrizione completata!', 'success', 3000);
+    showToast('Trascrizione completata!', 'success', 3000);
   });
 
   window.memoAPI.onTranscriptionError((err) => {
     UI.transcribeProgress.classList.add('hidden');
     UI.transcribeButtons.classList.remove('hidden');
-    showToast('❌ Errore trascrizione: ' + err, 'error', 5000);
+    showToast('Errore trascrizione: ' + err, 'error', 5000);
   });
 }
 
@@ -730,12 +873,10 @@ function renderTranscript() {
   const { segments, text } = state.transcript;
 
   if (!state.showTimestamps || !segments || segments.length === 0) {
-    // Testo pulito
     UI.timestampsMargin.classList.remove('visible');
     UI.timestampsMargin.innerHTML = '';
     UI.transcriptContent.textContent = text || '';
   } else {
-    // Con timestamps nel margine
     UI.timestampsMargin.classList.add('visible');
     UI.timestampsMargin.innerHTML = '';
     UI.transcriptContent.innerHTML = '';
@@ -776,7 +917,7 @@ async function exportTranscript(format) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 5. LIBRERIA
+// 6. LIBRERIA & GESTIONE MATERIE
 // ══════════════════════════════════════════════════════════════
 async function refreshLibrary() {
   state.library = await window.memoAPI.libraryGet();
@@ -787,25 +928,56 @@ function renderLibrary() {
   UI.libraryTree.innerHTML = '';
 
   const { folders, unsorted } = state.library;
+  const query = state.searchQuery;
 
   // Cartelle materia
   folders.forEach(folder => {
-    const folderEl = createFolderElement(folder);
-    UI.libraryTree.appendChild(folderEl);
+    const filteredRecordings = filterRecordings(folder.recordings || [], query);
+    // Se c'è ricerca e la cartella corrisponde o ha registrazioni corrispondenti
+    const matchesFolder = folder.name.toLowerCase().includes(query);
+    if (!query || matchesFolder || filteredRecordings.length > 0) {
+      const folderEl = createFolderElement({
+        ...folder,
+        recordings: query && !matchesFolder ? filteredRecordings : folder.recordings,
+      }, query.length > 0);
+      UI.libraryTree.appendChild(folderEl);
+    }
   });
 
   // Non categorizzate
-  const unsortedFolder = {
-    name: '_unsorted',
-    displayName: 'Non categorizzate',
-    recordings: unsorted,
-    isSystem: true,
-  };
-  const unsortedEl = createFolderElement(unsortedFolder);
-  UI.libraryTree.appendChild(unsortedEl);
+  const filteredUnsorted = filterRecordings(unsorted || [], query);
+  if (!query || filteredUnsorted.length > 0) {
+    const unsortedFolder = {
+      name: '_unsorted',
+      displayName: 'Non categorizzate',
+      recordings: query ? filteredUnsorted : unsorted,
+      isSystem: true,
+    };
+    const unsortedEl = createFolderElement(unsortedFolder, query.length > 0);
+    UI.libraryTree.appendChild(unsortedEl);
+  }
+
+  // Nessun risultato
+  if (UI.libraryTree.children.length === 0 && query) {
+    const emptyMsg = document.createElement('div');
+    emptyMsg.style.padding = '20px 14px';
+    emptyMsg.style.color = 'var(--text-muted)';
+    emptyMsg.style.fontSize = '12px';
+    emptyMsg.style.textAlign = 'center';
+    emptyMsg.innerHTML = `<span class="memo-icon icon-lg" style="margin-bottom:6px; opacity:0.6;">${ICONS.search}</span><br/>Nessuna registrazione trovata per "<strong>${query}</strong>"`;
+    UI.libraryTree.appendChild(emptyMsg);
+  }
 }
 
-function createFolderElement(folder) {
+function filterRecordings(recs, query) {
+  if (!query) return recs;
+  return recs.filter(r => {
+    const nameMatch = (r.name || r.dirName || '').toLowerCase().includes(query);
+    return nameMatch;
+  });
+}
+
+function createFolderElement(folder, autoExpand = false) {
   const isSystem = folder.isSystem;
   const displayName = folder.displayName || folder.name;
   const recordings = folder.recordings || [];
@@ -813,17 +985,16 @@ function createFolderElement(folder) {
   const wrap = document.createElement('div');
   wrap.className = 'folder-wrap';
 
-  // Header cartella
   const header = document.createElement('div');
-  header.className = 'folder-item';
+  header.className = `folder-item ${autoExpand ? 'expanded' : ''}`;
 
   const arrow = document.createElement('span');
   arrow.className = 'folder-arrow';
-  arrow.textContent = '▶';
+  arrow.innerHTML = ICONS.chevronRight;
 
   const icon = document.createElement('span');
   icon.className = 'folder-icon';
-  icon.textContent = isSystem ? '📥' : '📁';
+  icon.innerHTML = isSystem ? ICONS.inbox : ICONS.folder;
 
   const name = document.createElement('span');
   name.className = 'folder-name';
@@ -838,21 +1009,21 @@ function createFolderElement(folder) {
   header.appendChild(name);
   header.appendChild(count);
 
-  // Azioni cartella (non per sistema)
+  // Azioni su cartella
   if (!isSystem) {
     const actions = document.createElement('div');
     actions.className = 'folder-actions';
 
     const renameBtn = document.createElement('button');
     renameBtn.className = 'folder-action-btn';
-    renameBtn.title = 'Rinomina';
-    renameBtn.textContent = '✏️';
+    renameBtn.title = 'Rinomina materia';
+    renameBtn.innerHTML = ICONS.edit;
     renameBtn.onclick = (e) => { e.stopPropagation(); renameFolder(folder.name); };
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'folder-action-btn danger';
-    deleteBtn.title = 'Elimina cartella';
-    deleteBtn.textContent = '🗑️';
+    deleteBtn.title = 'Elimina materia';
+    deleteBtn.innerHTML = ICONS.trash;
     deleteBtn.onclick = (e) => { e.stopPropagation(); deleteFolder(folder.name); };
 
     actions.appendChild(renameBtn);
@@ -864,7 +1035,7 @@ function createFolderElement(folder) {
 
   // Lista registrazioni
   const list = document.createElement('div');
-  list.className = 'recordings-list hidden';
+  list.className = `recordings-list ${autoExpand ? '' : 'hidden'}`;
 
   recordings.forEach(rec => {
     const recEl = createRecordingElement(rec, folder.name);
@@ -873,11 +1044,14 @@ function createFolderElement(folder) {
 
   wrap.appendChild(list);
 
-  // Toggle espansione
   header.addEventListener('click', () => {
     const isExpanded = !list.classList.contains('hidden');
     list.classList.toggle('hidden', isExpanded);
     header.classList.toggle('expanded', !isExpanded);
+    // Cambia icona cartella aperta/chiusa se non è inbox
+    if (!isSystem) {
+      icon.innerHTML = !isExpanded ? ICONS.folderOpen : ICONS.folder;
+    }
   });
 
   return wrap;
@@ -885,14 +1059,14 @@ function createFolderElement(folder) {
 
 function createRecordingElement(rec, folderName) {
   const el = document.createElement('div');
-  el.className = 'rec-item';
+  el.className = `rec-item ${rec.hasTranscript ? 'has-transcript' : ''}`;
   if (state.activeRec && state.activeRec.recDir === rec.recDir) {
     el.classList.add('active');
   }
 
   const icon = document.createElement('span');
   icon.className = 'rec-item-icon';
-  icon.textContent = rec.hasTranscript ? '📄' : '🎵';
+  icon.innerHTML = rec.hasTranscript ? ICONS.document : ICONS.audioWave;
 
   const info = document.createElement('div');
   info.className = 'rec-item-info';
@@ -903,28 +1077,38 @@ function createRecordingElement(rec, folderName) {
 
   const meta = document.createElement('div');
   meta.className = 'rec-item-meta';
+
+  const badge = document.createElement('span');
+  badge.className = `rec-badge-tag ${rec.hasTranscript ? 'badge-transcript' : 'badge-audio'}`;
+  badge.textContent = rec.hasTranscript ? 'Testo' : 'Audio';
+  meta.appendChild(badge);
+
   const parts = [];
   if (rec.date) parts.push(formatDate(rec.date));
   if (rec.duration) parts.push(formatDuration(rec.duration));
-  meta.textContent = parts.join(' · ');
+  if (parts.length > 0) {
+    const textSpan = document.createElement('span');
+    textSpan.textContent = parts.join(' · ');
+    meta.appendChild(textSpan);
+  }
 
   info.appendChild(nameEl);
   info.appendChild(meta);
 
-  // Azioni
+  // Azioni su registrazione
   const actions = document.createElement('div');
   actions.className = 'rec-item-actions';
 
   const moveBtn = document.createElement('button');
   moveBtn.className = 'rec-action-btn';
-  moveBtn.title = 'Sposta';
-  moveBtn.textContent = '↗️';
+  moveBtn.title = 'Sposta in altra materia';
+  moveBtn.innerHTML = ICONS.move;
   moveBtn.onclick = (e) => { e.stopPropagation(); showMoveModal(rec); };
 
   const deleteBtn = document.createElement('button');
   deleteBtn.className = 'rec-action-btn danger';
-  deleteBtn.title = 'Elimina';
-  deleteBtn.textContent = '🗑️';
+  deleteBtn.title = 'Elimina registrazione';
+  deleteBtn.innerHTML = ICONS.trash;
   deleteBtn.onclick = (e) => { e.stopPropagation(); confirmDeleteRecording(rec); };
 
   actions.appendChild(moveBtn);
@@ -934,21 +1118,27 @@ function createRecordingElement(rec, folderName) {
   el.appendChild(info);
   el.appendChild(actions);
 
-  el.addEventListener('click', () => openRecording(rec));
+  el.addEventListener('click', () => openRecording(rec, folderName));
 
   return el;
 }
 
-// ═ Apri registrazione ════════════════════════════════════════
-async function openRecording(rec) {
+// ══════════════════════════════════════════════════════════════
+// 7. APRI REGISTRAZIONE
+// ══════════════════════════════════════════════════════════════
+async function openRecording(rec, folderName) {
   state.activeRec = rec;
 
-  // Aggiorna UI
+  // Mostra vista nota e nascondi empty state
   UI.emptyState.classList.add('hidden');
   UI.transcriptView.classList.remove('hidden');
+
+  // Breadcrumb
+  const displayFolder = rec.folder || folderName || 'Non categorizzate';
+  UI.breadcrumbFolder.textContent = displayFolder === '_unsorted' ? 'Non categorizzate' : displayFolder;
   UI.recNameLabel.textContent = rec.name || rec.dirName;
 
-  // Marca elemento attivo nella sidebar
+  // Evidenzia elemento attivo nella sidebar
   document.querySelectorAll('.rec-item').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.rec-item').forEach(el => {
     if (el.querySelector('.rec-item-name')?.textContent === (rec.name || rec.dirName)) {
@@ -956,7 +1146,7 @@ async function openRecording(rec) {
     }
   });
 
-  // Carica trascrizione
+  // Carica trascrizione esistente
   state.transcript = null;
   UI.transcriptContent.textContent = '';
   UI.timestampsMargin.innerHTML = '';
@@ -967,7 +1157,7 @@ async function openRecording(rec) {
     renderTranscript();
   }
 
-  // Carica audio nel player
+  // Carica audio nel player della barra inferiore
   const audioResult = await window.memoAPI.audioGetPath({ recDir: rec.recDir });
   if (audioResult.success) {
     loadAudio(audioResult.audioPath);
@@ -975,7 +1165,7 @@ async function openRecording(rec) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 6. PLAYER AUDIO
+// 8. PLAYER AUDIO
 // ══════════════════════════════════════════════════════════════
 function setupPlayerControls() {
   const audio = state.playerAudio;
@@ -983,10 +1173,10 @@ function setupPlayerControls() {
   UI.btnPlayPause.addEventListener('click', () => {
     if (audio.paused) {
       audio.play();
-      UI.btnPlayPause.textContent = '⏸';
+      UI.iconPlayerPlaySlot.innerHTML = ICONS.pause;
     } else {
       audio.pause();
-      UI.btnPlayPause.textContent = '▶';
+      UI.iconPlayerPlaySlot.innerHTML = ICONS.play;
     }
   });
 
@@ -997,7 +1187,7 @@ function setupPlayerControls() {
   });
 
   audio.addEventListener('ended', () => {
-    UI.btnPlayPause.textContent = '▶';
+    UI.iconPlayerPlaySlot.innerHTML = ICONS.play;
   });
 
   UI.playerSeek.addEventListener('input', () => {
@@ -1013,7 +1203,7 @@ function loadAudio(src) {
   const audio = state.playerAudio;
   audio.src = src;
   audio.load();
-  UI.btnPlayPause.textContent = '▶';
+  UI.iconPlayerPlaySlot.innerHTML = ICONS.play;
   showPlayerOrWaveform('player');
 }
 
@@ -1031,10 +1221,9 @@ function showPlayerOrWaveform(which) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 7. CARTELLE & OPERAZIONI LIBRERIA
+// 9. MODALI & OPERAZIONI MATERIA
 // ══════════════════════════════════════════════════════════════
 function setupModalHandlers() {
-  // Nuova cartella
   UI.btnNewFolder.addEventListener('click', () => {
     UI.inputFolderName.value = '';
     UI.modalFolder.classList.remove('hidden');
@@ -1048,14 +1237,13 @@ function setupModalHandlers() {
     const result = await window.memoAPI.folderCreate({ name });
     UI.modalFolder.classList.add('hidden');
     if (result.success) {
-      showToast(`📁 Materia "${result.name}" creata`, 'success', 2000);
+      showToast(`Materia "${result.name}" creata`, 'success', 2000);
       await refreshLibrary();
     } else {
-      showToast('❌ ' + result.error, 'error', 3000);
+      showToast(result.error, 'error', 3000);
     }
   });
 
-  // Chiudi modal con click fuori
   [UI.modalFolder, UI.modalMove, UI.modalConfirm, UI.modalSaveName].forEach(modal => {
     modal.addEventListener('click', (e) => {
       if (e.target === modal) modal.classList.add('hidden');
@@ -1068,24 +1256,24 @@ async function renameFolder(oldName) {
   if (!newName || newName === oldName) return;
   const result = await window.memoAPI.folderRename({ oldName, newName });
   if (result.success) {
-    showToast(`✅ Rinominata in "${result.name}"`, 'success', 2000);
+    showToast(`Rinominata in "${result.name}"`, 'success', 2000);
     await refreshLibrary();
   } else {
-    showToast('❌ ' + result.error, 'error', 3000);
+    showToast(result.error, 'error', 3000);
   }
 }
 
 function deleteFolder(name) {
   showConfirmModal(
     `Elimina materia "${name}"`,
-    `Le registrazioni saranno spostate in "Non categorizzate". Vuoi continuare?`,
+    `Le registrazioni contenute saranno spostate in "Non categorizzate". Vuoi continuare?`,
     async () => {
       const result = await window.memoAPI.folderDelete({ name });
       if (result.success) {
-        showToast(`🗑️ Materia eliminata`, 'success', 2000);
+        showToast('Materia eliminata', 'success', 2000);
         await refreshLibrary();
       } else {
-        showToast('❌ ' + result.error, 'error', 3000);
+        showToast(result.error, 'error', 3000);
       }
     }
   );
@@ -1094,19 +1282,17 @@ function deleteFolder(name) {
 function showMoveModal(rec) {
   UI.moveFolderList.innerHTML = '';
 
-  // Opzione non categorizzata
   const unsortedBtn = document.createElement('button');
   unsortedBtn.className = 'move-folder-item';
-  unsortedBtn.textContent = '📥 Non categorizzate';
+  unsortedBtn.innerHTML = `<span class="memo-icon">${ICONS.inbox}</span> <span>Non categorizzate</span>`;
   unsortedBtn.onclick = () => moveRec(rec, null);
   UI.moveFolderList.appendChild(unsortedBtn);
 
-  // Cartelle materia
   state.library.folders.forEach(f => {
-    if (f.name === rec.folder) return; // skip cartella corrente
+    if (f.name === rec.folder) return;
     const btn = document.createElement('button');
     btn.className = 'move-folder-item';
-    btn.textContent = `📁 ${f.name}`;
+    btn.innerHTML = `<span class="memo-icon">${ICONS.folder}</span> <span>${f.name}</span>`;
     btn.onclick = () => moveRec(rec, f.name);
     UI.moveFolderList.appendChild(btn);
   });
@@ -1122,36 +1308,32 @@ async function moveRec(rec, targetFolder) {
     targetFolder,
   });
   if (result.success) {
-    showToast(`✅ Spostata in "${targetFolder || 'Non categorizzate'}"`, 'success', 2000);
-    // Aggiorna il percorso nella selezione attiva
+    showToast(`Spostata in "${targetFolder || 'Non categorizzate'}"`, 'success', 2000);
     if (state.activeRec && state.activeRec.recDir === rec.recDir) {
       state.activeRec.recDir = result.newPath;
       state.activeRec.folder = targetFolder;
+      UI.breadcrumbFolder.textContent = targetFolder || 'Non categorizzate';
     }
     await refreshLibrary();
   } else {
-    showToast('❌ ' + result.error, 'error', 3000);
+    showToast(result.error, 'error', 3000);
   }
 }
 
 function confirmDeleteRecording(rec) {
   showConfirmModal(
     'Elimina registrazione',
-    `Eliminare "${rec.name || rec.dirName}"? Questa azione non è reversibile.`,
+    `Eliminare "${rec.name || rec.dirName}"? Questa operazione cancellerà sia l'audio che la trascrizione.`,
     async () => {
       if (state.activeRec && state.activeRec.recDir === rec.recDir) {
-        state.activeRec = null;
-        UI.transcriptView.classList.add('hidden');
-        UI.emptyState.classList.remove('hidden');
-        state.playerAudio.src = '';
-        showPlayerOrWaveform('waveform');
+        closeActiveRecording();
       }
       const result = await window.memoAPI.recordingDelete({ recDir: rec.recDir });
       if (result.success) {
-        showToast('🗑️ Registrazione eliminata', 'success', 2000);
+        showToast('Registrazione eliminata', 'success', 2000);
         await refreshLibrary();
       } else {
-        showToast('❌ ' + result.error, 'error', 3000);
+        showToast(result.error, 'error', 3000);
       }
     }
   );
@@ -1177,7 +1359,7 @@ UI.btnConfirmOk.addEventListener('click', () => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// 8. RESIZER SIDEBAR
+// 10. RESIZER SIDEBAR
 // ══════════════════════════════════════════════════════════════
 function setupResizer() {
   const resizer = $('resizer');
@@ -1196,7 +1378,7 @@ function setupResizer() {
   document.addEventListener('mousemove', (e) => {
     if (!isResizing) return;
     const delta = e.clientX - startX;
-    const newW = Math.max(180, Math.min(400, startW + delta));
+    const newW = Math.max(200, Math.min(420, startW + delta));
     sidebar.style.width = newW + 'px';
   });
 
@@ -1210,15 +1392,87 @@ function setupResizer() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 9. CONTROLLI FINESTRA (Semaforo nativo macOS)
+// 11. DOWNLOAD MODELLO
 // ══════════════════════════════════════════════════════════════
-function setupWindowControls() {
-  $('btn-minimize')?.addEventListener('click', () => window.memoAPI.windowMinimize());
-  $('btn-close')?.addEventListener('click', () => window.memoAPI.windowClose());
+function startModelDownload() {
+  document.body.classList.add('has-banner');
+  UI.modelBanner.classList.remove('hidden');
+
+  window.memoAPI.onModelProgress((data) => {
+    const pct = data.percent;
+    UI.modelProgressFill.style.width = pct + '%';
+    UI.modelProgressPct.textContent = pct + '%';
+    const mb = Math.round(data.downloaded / 1024 / 1024);
+    const total = Math.round(data.total / 1024 / 1024);
+    UI.modelBannerDesc.textContent = `Scaricamento modello Whisper AI… ${mb} MB / ${total} MB`;
+  });
+
+  window.memoAPI.onModelDone(() => {
+    state.modelReady = true;
+    UI.modelProgressFill.style.width = '100%';
+    UI.modelProgressPct.textContent = '100%';
+    UI.modelBannerDesc.textContent = 'Modello pronto!';
+    setTimeout(() => {
+      UI.modelBanner.classList.add('hidden');
+      document.body.classList.remove('has-banner');
+    }, 2000);
+    showToast('Modello Whisper pronto', 'success', 4000);
+  });
+
+  window.memoAPI.onModelError((err) => {
+    UI.modelBannerDesc.textContent = `Errore download: ${err}. Riavvia l'app.`;
+    showToast('Errore download modello: ' + err, 'error', 6000);
+  });
+
+  window.memoAPI.modelDownload();
+}
+
+// ══════════════════════════════════════════════════════════════
+// 12. AUTO-UPDATER
+// ══════════════════════════════════════════════════════════════
+function setupUpdaterControls() {
+  if (!window.memoAPI?.onUpdateStatus) return;
+
+  UI.btnCheckUpdates?.addEventListener('click', async () => {
+    showToast('Ricerca aggiornamenti...', 'info', 2000);
+    const res = await window.memoAPI.checkForUpdates();
+    if (!res.success && res.message) {
+      showToast(res.message, 'info', 3000);
+    }
+  });
+
+  UI.btnUpdateDismiss?.addEventListener('click', () => {
+    UI.updateBanner?.classList.add('hidden');
+  });
+
+  UI.btnUpdateAction?.addEventListener('click', () => {
+    window.memoAPI.restartAndInstall();
+  });
+
+  window.memoAPI.onUpdateStatus((info) => {
+    if (info.type === 'available') {
+      UI.updateBanner?.classList.remove('hidden');
+      if (UI.updateBannerText) UI.updateBannerText.textContent = info.message;
+      if (UI.btnUpdateAction) UI.btnUpdateAction.classList.add('hidden');
+      showToast(info.message, 'info', 4000);
+    } else if (info.type === 'downloaded') {
+      UI.updateBanner?.classList.remove('hidden');
+      if (UI.updateBannerText) UI.updateBannerText.textContent = info.message;
+      if (UI.btnUpdateAction) UI.btnUpdateAction.classList.remove('hidden');
+      showToast('Aggiornamento pronto! Clicca "Riavvia e Aggiorna"', 'success', 6000);
+    } else if (info.type === 'not-available') {
+      showToast('Memo è già aggiornato', 'success', 2500);
+    }
+  });
+
+  window.memoAPI.onUpdateProgress?.((p) => {
+    if (UI.updateBannerText) {
+      UI.updateBannerText.textContent = `Scaricamento aggiornamento... ${p.percent}%`;
+    }
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
 // AVVIO
 // ══════════════════════════════════════════════════════════════
 init();
-

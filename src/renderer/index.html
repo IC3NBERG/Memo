@@ -13,13 +13,16 @@
   <!-- ── TITLEBAR ─────────────────────────────────────────── -->
   <div id="titlebar">
     <div class="titlebar-traffic-space"></div>
-    <span class="app-name">🎙️ Memo</span>
+    <div class="app-brand">
+      <span class="brand-icon" id="brand-icon-slot"></span>
+      <span class="app-name">Memo</span>
+    </div>
   </div>
 
   <!-- ── BANNER DOWNLOAD MODELLO ───────────────────────────── -->
   <div id="model-banner" class="hidden">
     <div class="model-banner-inner">
-      <span class="model-banner-icon">🤖</span>
+      <span class="model-banner-icon" id="model-icon-slot"></span>
       <div class="model-banner-text">
         <strong>Modello Whisper richiesto</strong>
         <span id="model-banner-desc">Scaricamento del modello AI (≈1.5 GB)…</span>
@@ -36,10 +39,10 @@
   <!-- ── BANNER AGGIORNAMENTI ───────────────────────────────── -->
   <div id="update-banner" class="hidden">
     <div class="update-banner-inner">
-      <span class="update-banner-icon">✨</span>
+      <span class="update-banner-icon" id="update-icon-slot"></span>
       <span id="update-banner-text">Nuovo aggiornamento disponibile.</span>
-      <button id="btn-update-action" class="btn-primary" style="padding: 4px 10px; font-size: 11px;">Riavvia e Aggiorna</button>
-      <button id="btn-update-dismiss" class="tb-btn" style="width: 20px; height: 20px; font-size: 10px;">✕</button>
+      <button id="btn-update-action" class="btn-primary btn-sm">Riavvia e Aggiorna</button>
+      <button id="btn-update-dismiss" class="tb-btn" title="Chiudi avviso" id="btn-dismiss-slot">✕</button>
     </div>
   </div>
 
@@ -50,15 +53,30 @@
     <aside id="sidebar">
       <div id="sidebar-header">
         <span class="sidebar-title">Libreria</span>
-        <button id="btn-new-folder" title="Nuova materia">+ Materia</button>
+        <button id="btn-new-folder" class="btn-new-folder" title="Nuova materia">
+          <span class="btn-icon" id="icon-new-folder-slot"></span>
+          <span>Materia</span>
+        </button>
+      </div>
+
+      <!-- Barra di ricerca rapida -->
+      <div class="sidebar-search-wrap">
+        <div class="sidebar-search-inner">
+          <span class="search-icon-slot" id="search-icon-slot"></span>
+          <input type="text" id="search-input" placeholder="Cerca registrazioni o note..." autocomplete="off" spellcheck="false" />
+          <button id="btn-clear-search" class="btn-clear-search hidden" title="Cancella ricerca">✕</button>
+        </div>
       </div>
 
       <div id="library-tree"></div>
 
       <div id="sidebar-footer">
-        <div class="footer-row" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-          <span class="app-version" id="app-version-label" style="font-size: 11px; color: var(--text-muted);">Memo</span>
-          <button id="btn-check-updates" class="btn-secondary" style="font-size: 10px; padding: 2px 6px;">🔄 Update</button>
+        <div class="footer-row">
+          <span class="app-version" id="app-version-label">Memo v1.0.0</span>
+          <button id="btn-check-updates" class="btn-secondary btn-xs" title="Controlla aggiornamenti">
+            <span class="btn-icon" id="icon-update-slot"></span>
+            <span>Update</span>
+          </button>
         </div>
       </div>
     </aside>
@@ -70,51 +88,97 @@
     <main id="main-area">
       <!-- stato: nessuna selezione -->
       <div id="empty-state" class="center-placeholder">
-        <div class="empty-icon">🎙️</div>
-        <p>Premi <strong>REC</strong> per iniziare una nuova registrazione<br/>o seleziona una registrazione dalla libreria.</p>
+        <div class="empty-icon-wrap" id="empty-icon-slot"></div>
+        <h2>Nessuna nota aperta</h2>
+        <p>Premi <strong>REC</strong> in basso per avviare una nuova registrazione<br/>oppure seleziona una lezione dall'elenco a sinistra.</p>
+        <div class="empty-actions">
+          <button id="btn-empty-new-rec" class="btn-primary">
+            <span class="btn-icon" id="empty-rec-icon-slot"></span>
+            <span>Nuova Registrazione</span>
+          </button>
+        </div>
       </div>
 
       <!-- Vista trascrizione -->
       <div id="transcript-view" class="hidden">
         <div id="transcript-toolbar">
           <div class="transcript-actions-left">
-            <span id="rec-name-label" class="rec-title" contenteditable="false"></span>
+            <!-- Pulsante per uscire dalla nota -->
+            <button id="btn-close-note" class="btn-back" title="Chiudi nota e torna alla schermata principale (Esc)">
+              <span class="btn-icon" id="icon-back-slot"></span>
+              <span>Chiudi</span>
+            </button>
+            <div class="transcript-breadcrumb">
+              <span id="breadcrumb-folder" class="bc-folder">Materia</span>
+              <span class="bc-sep">/</span>
+              <span id="rec-name-label" class="rec-title" contenteditable="false" title="Doppio click per rinominare"></span>
+            </div>
           </div>
           <div class="transcript-actions-right">
-            <label class="toggle-wrap" title="Mostra/nasconde i timestamp">
+            <label class="toggle-wrap" title="Mostra o nascondi i marcatori temporali">
               <input type="checkbox" id="toggle-timestamps" />
               <span class="toggle-slider"></span>
-              <span class="toggle-label">⏱ Timestamps</span>
+              <span class="toggle-label">
+                <span class="btn-icon" id="icon-clock-slot"></span>
+                <span>Timestamps</span>
+              </span>
             </label>
-            <button id="btn-copy-all" class="btn-secondary" title="Copia tutto il testo">📋 Copia</button>
-            <button id="btn-export-txt" class="btn-secondary" title="Esporta come TXT">↓ TXT</button>
-            <button id="btn-export-md" class="btn-secondary" title="Esporta come Markdown">↓ MD</button>
+            <button id="btn-copy-all" class="btn-secondary" title="Copia tutto il testo">
+              <span class="btn-icon" id="icon-copy-slot"></span>
+              <span>Copia</span>
+            </button>
+            <button id="btn-export-txt" class="btn-secondary" title="Esporta come testo .txt">
+              <span class="btn-icon" id="icon-txt-slot"></span>
+              <span>TXT</span>
+            </button>
+            <button id="btn-export-md" class="btn-secondary" title="Esporta come Markdown .md">
+              <span class="btn-icon" id="icon-md-slot"></span>
+              <span>MD</span>
+            </button>
           </div>
         </div>
 
-        <!-- Bottoni trascrizione -->
+        <!-- Bottoni e stato trascrizione -->
         <div id="transcribe-bar">
           <div id="transcribe-buttons">
-            <button id="btn-transcribe-live" class="btn-transcribe" disabled>
-              <span class="btn-icon">⚡</span> Trascrivi Live
+            <button id="btn-transcribe-live" class="btn-transcribe" title="Attiva/disattiva trascrizione live in tempo reale durante la registrazione">
+              <span class="btn-icon" id="icon-live-slot"></span>
+              <span id="live-transcribe-text">Trascrivi Live</span>
             </button>
-            <button id="btn-transcribe-after" class="btn-transcribe">
-              <span class="btn-icon">📝</span> Trascrivi
+            <button id="btn-transcribe-after" class="btn-transcribe" title="Trascrivi l'intera registrazione">
+              <span class="btn-icon" id="icon-transcribe-slot"></span>
+              <span>Trascrivi</span>
             </button>
+            <div class="transcribe-mode-select">
+              <label for="select-transcribe-mode" class="mode-label">
+                <span class="btn-icon" id="icon-translate-slot"></span>
+                <span>Modalità:</span>
+              </label>
+              <select id="select-transcribe-mode">
+                <option value="transcribe" selected>Trascrivi (Italiano)</option>
+                <option value="translate">Traduci in Inglese</option>
+              </select>
+            </div>
           </div>
+          <!-- Badge Live in ascolto -->
+          <div id="live-indicator-badge" class="live-badge hidden">
+            <span class="live-dot-pulse"></span>
+            <span id="live-indicator-text">Trascrizione Live attiva…</span>
+          </div>
+          <!-- Progress bar trascrizione standard -->
           <div id="transcribe-progress" class="hidden">
             <div class="transcribe-progress-bar">
               <div id="transcribe-progress-fill"></div>
             </div>
             <span id="transcribe-progress-pct">0%</span>
-            <span id="transcribe-status-text">Trascrizione in corso…</span>
+            <span id="transcribe-status-text">Analisi con GPU Metal…</span>
           </div>
         </div>
 
         <!-- Area testo trascrizione -->
         <div id="transcript-area">
           <div id="transcript-content" contenteditable="true" spellcheck="true"
-               data-placeholder="La trascrizione apparirà qui. Puoi modificarla direttamente."></div>
+               data-placeholder="La trascrizione apparirà qui. Puoi modificarla direttamente o digitare note personali."></div>
           <div id="timestamps-margin"></div>
         </div>
       </div>
@@ -128,43 +192,54 @@
       <!-- Controlli registrazione -->
       <div id="rec-controls">
         <button id="btn-rec" class="rec-btn" title="Inizia registrazione">
-          <span class="rec-dot"></span> REC
+          <span class="rec-dot"></span>
+          <span class="rec-text">REC</span>
         </button>
-        <button id="btn-pause" class="ctrl-btn" title="Pausa" disabled>⏸</button>
-        <button id="btn-stop" class="ctrl-btn" title="Stop" disabled>⏹</button>
+        <button id="btn-pause" class="ctrl-btn" title="Pausa registrazione" disabled>
+          <span id="icon-pause-slot"></span>
+        </button>
+        <button id="btn-stop" class="ctrl-btn" title="Stop e salva registrazione" disabled>
+          <span id="icon-stop-slot"></span>
+        </button>
         <span id="rec-timer" class="rec-timer">00:00:00</span>
       </div>
 
-      <!-- Waveform -->
+      <!-- Waveform audio attiva -->
       <div id="waveform-wrap">
         <canvas id="waveform-canvas"></canvas>
       </div>
 
-      <!-- Player (quando riproduce un file) -->
+      <!-- Player audio quando riproduce una nota -->
       <div id="player-controls" class="hidden">
-        <button id="btn-play-pause" class="ctrl-btn" title="Play/Pausa">▶</button>
+        <button id="btn-play-pause" class="ctrl-btn" title="Play / Pausa">
+          <span id="icon-player-play-slot"></span>
+        </button>
         <input type="range" id="player-seek" min="0" max="100" value="0" />
         <span id="player-time">0:00 / 0:00</span>
-        <span class="vol-label">🔊</span>
-        <input type="range" id="player-volume" min="0" max="1" step="0.01" value="1" />
+        <span class="vol-label" id="icon-volume-slot"></span>
+        <input type="range" id="player-volume" min="0" max="1" step="0.01" value="1" title="Volume riproduzione" />
       </div>
 
       <!-- Toggle preprocessing -->
       <div id="preprocessing-toggles">
-        <label class="preproc-toggle" title="Filtro passa-alto (80Hz)">
+        <label class="preproc-toggle" title="Filtro passa-alto (80Hz): rimuove condizionatori e rombi bassi">
           <input type="checkbox" id="toggle-highpass" checked />
+          <span class="check-icon" id="check-hp-slot"></span>
           <span>High-Pass</span>
         </label>
-        <label class="preproc-toggle" title="Noise Gate">
+        <label class="preproc-toggle" title="Noise Gate: silenzia il rumore di fondo d'aula">
           <input type="checkbox" id="toggle-noisegate" checked />
+          <span class="check-icon" id="check-ng-slot"></span>
           <span>Noise Gate</span>
         </label>
-        <label class="preproc-toggle" title="Compressore dinamico">
+        <label class="preproc-toggle" title="Compressore dinamico: amplifica docenti distanti">
           <input type="checkbox" id="toggle-compressor" checked />
+          <span class="check-icon" id="check-comp-slot"></span>
           <span>Compressor</span>
         </label>
-        <label class="preproc-toggle" title="Guadagno automatico">
+        <label class="preproc-toggle" title="Guadagno adattivo (Auto-Gain): voce lontana nitida">
           <input type="checkbox" id="toggle-autogain" checked />
+          <span class="check-icon" id="check-gain-slot"></span>
           <span>Auto-Gain</span>
         </label>
       </div>
@@ -177,11 +252,14 @@
   <!-- Modal: nuova materia -->
   <div id="modal-folder" class="modal-overlay hidden">
     <div class="modal">
-      <h3>Nuova Materia</h3>
-      <input type="text" id="input-folder-name" placeholder="Es. Analisi Matematica" maxlength="50" />
+      <div class="modal-header">
+        <span class="modal-icon-header" id="modal-newfolder-icon-slot"></span>
+        <h3>Nuova Materia</h3>
+      </div>
+      <input type="text" id="input-folder-name" placeholder="Es. Analisi Matematica, Diritto Privato..." maxlength="50" />
       <div class="modal-actions">
         <button id="btn-folder-cancel" class="btn-secondary">Annulla</button>
-        <button id="btn-folder-confirm" class="btn-primary">Crea</button>
+        <button id="btn-folder-confirm" class="btn-primary">Crea Materia</button>
       </div>
     </div>
   </div>
@@ -189,7 +267,10 @@
   <!-- Modal: sposta registrazione -->
   <div id="modal-move" class="modal-overlay hidden">
     <div class="modal">
-      <h3>Sposta in…</h3>
+      <div class="modal-header">
+        <span class="modal-icon-header" id="modal-move-icon-slot"></span>
+        <h3>Sposta Registrazione in…</h3>
+      </div>
       <div id="move-folder-list"></div>
       <div class="modal-actions">
         <button id="btn-move-cancel" class="btn-secondary">Annulla</button>
@@ -200,7 +281,10 @@
   <!-- Modal: conferma eliminazione -->
   <div id="modal-confirm" class="modal-overlay hidden">
     <div class="modal">
-      <h3 id="confirm-title">Conferma eliminazione</h3>
+      <div class="modal-header">
+        <span class="modal-icon-header modal-icon-danger" id="modal-trash-icon-slot"></span>
+        <h3 id="confirm-title">Conferma eliminazione</h3>
+      </div>
       <p id="confirm-message"></p>
       <div class="modal-actions">
         <button id="btn-confirm-cancel" class="btn-secondary">Annulla</button>
@@ -212,7 +296,10 @@
   <!-- Modal: salva nome registrazione -->
   <div id="modal-save-name" class="modal-overlay hidden">
     <div class="modal">
-      <h3>Nome registrazione</h3>
+      <div class="modal-header">
+        <span class="modal-icon-header" id="modal-rec-icon-slot"></span>
+        <h3>Salva Registrazione</h3>
+      </div>
       <input type="text" id="input-rec-name" placeholder="Es. Lezione 5 – Derivate parziali" maxlength="60" />
       <div class="modal-folder-select">
         <label>Materia:</label>
@@ -222,7 +309,7 @@
       </div>
       <div class="modal-actions">
         <button id="btn-save-cancel" class="btn-secondary">Annulla</button>
-        <button id="btn-save-confirm" class="btn-primary">Salva</button>
+        <button id="btn-save-confirm" class="btn-primary">Salva Nota</button>
       </div>
     </div>
   </div>
@@ -230,7 +317,8 @@
   <!-- Elemento audio nascosto per la riproduzione -->
   <audio id="hidden-audio"></audio>
 
+  <!-- Script iconografico e logica applicativa -->
+  <script src="icons.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
-

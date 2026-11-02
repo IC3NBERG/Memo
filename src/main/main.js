@@ -285,7 +285,7 @@ ipcMain.handle('recording:update-duration', (event, { recDir, duration }) => {
 });
 
 // ─── IPC: Trascrizione ─────────────────────────────────────────────────────
-ipcMain.on('transcription:start', (event, { audioPath, recDir }) => {
+ipcMain.on('transcription:start', (event, { audioPath, recDir, language, translate }) => {
   if (!fs.existsSync(MODEL_PATH)) {
     event.sender.send('transcription:error', 'Modello Whisper non trovato in ~/.MemoRecordings/.models.');
     return;
@@ -303,7 +303,7 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir }) => {
   // Argomenti conformi a whisper-cli nativo (whisper.cpp)
   const args = [
     '--model', MODEL_PATH,
-    '--language', 'it',
+    '--language', language || 'it',
     '--output-file', outputPrefix,
     '--output-json',
     '--output-txt',
@@ -311,6 +311,10 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir }) => {
     '--file', audioPath,
     '--threads', '4',
   ];
+
+  if (translate) {
+    args.push('--translate');
+  }
 
   const proc = spawn(whisperBin, args);
 
@@ -377,6 +381,76 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir }) => {
   proc.on('error', (err) => {
     event.sender.send('transcription:error', err.message);
   });
+});
+
+// ─── IPC: Trascrizione Chunk Live ─────────────────────────────────────────
+ipcMain.handle('transcription:chunk', async (event, { buffer, language, translate }) => {
+  if (!fs.existsSync(MODEL_PATH)) {
+    return { success: false, error: 'Modello non pronto' };
+  }
+  const whisperBin = getWhisperBinPath();
+  if (!fs.existsSync(whisperBin)) {
+    return { success: false, error: 'whisper-cli non trovato' };
+  }
+
+  const tmpId = Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+  const tmpWav = path.join(os.tmpdir(), `memo_chunk_${tmpId}.wav`);
+  const tmpOut = path.join(os.tmpdir(), `memo_chunk_out_${tmpId}`);
+
+  try {
+    fs.writeFileSync(tmpWav, Buffer.from(buffer));
+
+    const args = [
+      '--model', MODEL_PATH,
+      '--language', language || 'it',
+      '--output-txt',
+      '--output-file', tmpOut,
+      '--no-timestamps',
+      '--file', tmpWav,
+      '--threads', '4',
+    ];
+
+    if (translate) {
+      args.push('--translate');
+    }
+
+    return new Promise((resolve) => {
+      const proc = spawn(whisperBin, args);
+      let stderr = '';
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+      proc.on('close', (code) => {
+        try {
+          const txtFile = tmpOut + '.txt';
+          let text = '';
+          if (fs.existsSync(txtFile)) {
+            text = fs.readFileSync(txtFile, 'utf8').trim();
+            try { fs.unlinkSync(txtFile); } catch (_) {}
+          }
+          if (fs.existsSync(tmpWav)) {
+            try { fs.unlinkSync(tmpWav); } catch (_) {}
+          }
+
+          if (code === 0) {
+            resolve({ success: true, text });
+          } else {
+            resolve({ success: false, error: `whisper exit code ${code}: ${stderr.slice(-200)}` });
+          }
+        } catch (e) {
+          resolve({ success: false, error: e.message });
+        }
+      });
+
+      proc.on('error', (err) => {
+        if (fs.existsSync(tmpWav)) {
+          try { fs.unlinkSync(tmpWav); } catch (_) {}
+        }
+        resolve({ success: false, error: err.message });
+      });
+    });
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // ─── IPC: Libreria ─────────────────────────────────────────────────────────

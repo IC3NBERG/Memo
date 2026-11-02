@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('memoAPI', {
 
   // Trascrizione
   transcriptionStart: (data) => ipcRenderer.send('transcription:start', data),
+  transcriptionChunk: (data) => ipcRenderer.invoke('transcription:chunk', data),
   onTranscriptionProgress: (cb) => ipcRenderer.on('transcription:progress', (_, pct) => cb(pct)),
   onTranscriptionDone: (cb) => ipcRenderer.on('transcription:done', (_, transcript) => cb(transcript)),
   onTranscriptionError: (cb) => ipcRenderer.on('transcription:error', (_, err) => cb(err)),
