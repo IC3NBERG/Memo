@@ -8,6 +8,7 @@ const https = require('https');
 const http = require('http');
 const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
+const manualUpdater = require('./updater');
 
 // ─── Percorsi principali ───────────────────────────────────────────────────
 const OLD_MEMO_DIR = path.join(os.homedir(), 'MemoRecordings');
@@ -118,27 +119,48 @@ function rendererPath() {
 }
 
 // ─── Auto-Updater ──────────────────────────────────────────────────────────
+// Su macOS Squirrel.Mac accetta solo aggiornamenti firmati con lo stesso
+// Developer ID dell'app in esecuzione. Per le build ad-hoc usiamo un download
+// e un'installazione interna (ZIP + SHA-512 + sostituzione con backup).
+let manualUpdate = null;          // { version, file }
+let manualDownloadVersion = null; // versione attualmente in download
+let usesManualUpdater = false;
+
+function sendUpdateStatus(payload) {
+  mainWindow?.webContents.send('update:status', payload);
+}
+
+function sendUpdateProgress(payload) {
+  mainWindow?.webContents.send('update:progress', payload);
+}
+
 function setupAutoUpdater() {
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  const bundlePath = manualUpdater.getAppBundlePath(app.getPath('exe'));
+  usesManualUpdater = !manualUpdater.isDeveloperIdSigned(bundlePath);
+
+  autoUpdater.autoDownload = !usesManualUpdater;
+  autoUpdater.autoInstallOnAppQuit = !usesManualUpdater;
 
   autoUpdater.on('checking-for-update', () => {
-    mainWindow?.webContents.send('update:status', {
+    sendUpdateStatus({
       type: 'checking',
       message: 'Verifica aggiornamenti...'
     });
   });
 
   autoUpdater.on('update-available', (info) => {
-    mainWindow?.webContents.send('update:status', {
+    sendUpdateStatus({
       type: 'available',
       version: info.version,
       message: `Trovata nuova versione v${info.version}. Download in corso...`
     });
+    if (usesManualUpdater) {
+      startManualUpdateDownload(info);
+    }
   });
 
   autoUpdater.on('update-not-available', (info) => {
-    mainWindow?.webContents.send('update:status', {
+    sendUpdateStatus({
       type: 'not-available',
       version: info?.version || app.getVersion(),
       message: 'Crunch è già aggiornato all\'ultima versione.'
@@ -146,14 +168,14 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('error', (err) => {
-    mainWindow?.webContents.send('update:status', {
+    sendUpdateStatus({
       type: 'error',
       message: err ? (err.message || String(err)) : 'Errore durante la ricerca aggiornamenti'
     });
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
-    mainWindow?.webContents.send('update:progress', {
+    sendUpdateProgress({
       percent: Math.round(progressObj.percent || 0),
       transferred: progressObj.transferred,
       total: progressObj.total
@@ -161,7 +183,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    mainWindow?.webContents.send('update:status', {
+    sendUpdateStatus({
       type: 'downloaded',
       version: info.version,
       message: `Versione v${info.version} scaricata e pronta. Clicca per riavviare.`
@@ -179,6 +201,62 @@ function setupAutoUpdater() {
   }
 }
 
+async function startManualUpdateDownload(info) {
+  if (manualUpdate && manualUpdate.version === info.version && fs.existsSync(manualUpdate.file)) {
+    sendUpdateStatus({
+      type: 'downloaded',
+      version: manualUpdate.version,
+      message: `Versione v${manualUpdate.version} già scaricata e pronta. Clicca per riavviare.`
+    });
+    return;
+  }
+
+  if (manualDownloadVersion === info.version) return;
+
+  const files = Array.isArray(info.files) ? info.files : [];
+  const zipFile = files.find((file) => typeof file.url === 'string' && /\.zip($|\?)/i.test(file.url));
+  if (!zipFile) {
+    sendUpdateStatus({
+      type: 'error',
+      message: 'La release non contiene un pacchetto ZIP aggiornabile.'
+    });
+    return;
+  }
+
+  const fileName = path.basename(decodeURIComponent(zipFile.url.split('?')[0]));
+  const dest = path.join(app.getPath('userData'), 'updates', fileName);
+  const url = /^https?:\/\//i.test(zipFile.url)
+    ? zipFile.url
+    : `https://github.com/IC3NBERG/Memo/releases/download/v${info.version}/${encodeURIComponent(fileName)}`;
+
+  manualDownloadVersion = info.version;
+
+  try {
+    if (!(await manualUpdater.fileMatchesSha512(dest, zipFile.sha512))) {
+      await manualUpdater.downloadFile({
+        url,
+        dest,
+        sha512: zipFile.sha512,
+        onProgress: (progress) => sendUpdateProgress(progress),
+      });
+    }
+
+    manualUpdate = { version: info.version, file: dest };
+    sendUpdateStatus({
+      type: 'downloaded',
+      version: info.version,
+      message: `Versione v${info.version} scaricata e pronta. Clicca per riavviare.`
+    });
+  } catch (err) {
+    sendUpdateStatus({
+      type: 'error',
+      message: `Download aggiornamento fallito: ${err.message}`
+    });
+  } finally {
+    manualDownloadVersion = null;
+  }
+}
+
 ipcMain.handle('app:check-for-updates', async () => {
   if (!app.isPackaged) {
     return { success: false, message: 'Aggiornamenti automatici attivi nell\'app installata (Release).' };
@@ -191,8 +269,45 @@ ipcMain.handle('app:check-for-updates', async () => {
   }
 });
 
-ipcMain.handle('app:restart-and-install', () => {
-  autoUpdater.quitAndInstall();
+ipcMain.handle('app:restart-and-install', async () => {
+  if (!usesManualUpdater) {
+    autoUpdater.quitAndInstall();
+    return { success: true };
+  }
+
+  if (!manualUpdate || !fs.existsSync(manualUpdate.file)) {
+    shell.openExternal(manualUpdater.RELEASES_URL);
+    return {
+      success: false,
+      action: 'open-release',
+      error: 'Aggiornamento non ancora scaricato: ho aperto la pagina della release.',
+    };
+  }
+
+  const bundlePath = manualUpdater.getAppBundlePath(app.getPath('exe'));
+  if (!bundlePath) {
+    return { success: false, error: 'Percorso dell\'app non riconosciuto.' };
+  }
+
+  try {
+    const logPath = path.join(app.getPath('logs'), 'updater.log');
+    const result = manualUpdater.installUpdate({
+      zipPath: manualUpdate.file,
+      expectedVersion: manualUpdate.version,
+      appBundlePath: bundlePath,
+      currentPid: process.pid,
+      logPath,
+      launch: true,
+    });
+
+    setTimeout(() => app.quit(), 400);
+    return { success: true, logPath: result.logPath, backupPath: result.backupPath };
+  } catch (err) {
+    return {
+      success: false,
+      error: `Impossibile avviare l'aggiornamento: ${err.message}`,
+    };
+  }
 });
 
 ipcMain.handle('app:get-version', () => {

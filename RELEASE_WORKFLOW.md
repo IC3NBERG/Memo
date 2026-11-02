@@ -10,7 +10,7 @@ Questo documento specifica il protocollo standard per aggiornare e distribuire *
 Quando si implementano modifiche o nuove funzionalità:
 
 1. **Incrementare la versione**:
-   In `package.json`, incrementare il campo `"version"` (es. da `1.0.5` a `1.0.6` o `1.1.0`).
+   In `package.json`, incrementare il campo `"version"` (es. da `1.0.6` a `1.0.7` o `1.1.0`).
 
 2. **Compilare la nuova release**:
    ```bash
@@ -23,7 +23,7 @@ Quando si implementano modifiche o nuove funzionalità:
    - `dist/latest-mac.yml` (manifest usato da electron-updater)
 
 3. **Pubblicare su GitHub Release**:
-   - Creare una nuova Release su GitHub associata al tag (es. `v1.0.5`).
+   - Creare una nuova Release su GitHub associata al tag (es. `v1.0.6`).
    - Caricare nella release i file generati in `dist/` (in particolare `.zip`, `.dmg`, `.blockmap` e `latest-mac.yml`).
    - In alternativa, tramite comando con token GitHub configurato:
      ```bash
@@ -31,8 +31,8 @@ Quando si implementano modifiche o nuove funzionalità:
      ```
    - Oppure tramite Git Tag se sono attive le GitHub Actions:
      ```bash
-     git tag v1.0.5
-     git push origin v1.0.5
+     git tag v1.0.6
+     git push origin v1.0.6
      ```
 
 4. **Comportamento dell'App per gli Utenti**:
@@ -43,10 +43,22 @@ Quando si implementano modifiche o nuove funzionalità:
 
 ## ⚠️ Firma e notarizzazione (importante per l'auto-update)
 
-Su macOS l'aggiornamento automatico di `electron-updater` richiede un'app firmata e notarizzata.
-Per le release pubbliche configurare `CSC_LINK` / `CSC_KEY_PASSWORD` (certificato Developer ID)
-e le credenziali Apple per la notarizzazione. Senza firma la build resta installabile manualmente,
-ma l'aggiornamento automatico può non essere applicato dal sistema.
+Su macOS l'aggiornamento automatico nativo di `electron-updater` (Squirrel) richiede un'app firmata
+con lo stesso Developer ID e notarizzata. Per le release pubbliche configurare `CSC_LINK` /
+`CSC_KEY_PASSWORD` e le credenziali Apple per la notarizzazione.
+
+## 🔁 Fallback per build non firmate
+
+Crunch controlla la firma dell'app in esecuzione:
+
+- **Build firmata con Developer ID** → usa l'aggiornamento nativo Squirrel.
+- **Build ad-hoc/non firmata** → usa l'updater interno: scarica lo ZIP della Release, verifica lo
+  SHA-512, sostituisce l'app conservando un backup e la riapre automaticamente.
+
+Il primo passaggio a una versione che contiene questo meccanismo richiede un'installazione manuale
+del DMG. Dalle versioni successive il pulsante **"Riavvia e Aggiorna"** funziona anche senza firma.
+Il log dell'installazione si trova nella cartella Logs dell'app (`updater.log`); i backup restano
+in `/tmp/Crunch-backup-*.app` fino al riavvio del Mac.
 
 Il workflow GitHub Actions dichiara `permissions: contents: write` per poter creare la Release
 con il `GITHUB_TOKEN` predefinito.

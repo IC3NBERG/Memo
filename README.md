@@ -8,6 +8,7 @@ App nativa macOS per registrare, visualizzare e trascrivere lezioni universitari
 - **Verifica Completa 100%**: elaborazione ad alta precisione post-lezione del file WAV originale per non perdere alcuna parola o formula.
 - **Traduzione Automatica in Inglese**: motore neurale Whisper multilingua con rilevamento automatico della lingua.
 - **Organizzazione a Gruppi**: catalogazione note per materia o progetto con ricerca istantanea.
+- **Aggiornamenti automatici**: download e installazione integrati, con fallback sicuro per le build non firmate.
 - **Privacy Totale**: 100% locale e offline in `~/CrunchRecordings/`.
 
 ## Avvio rapido (sviluppo)

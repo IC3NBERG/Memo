@@ -1872,8 +1872,19 @@ function setupUpdaterControls() {
     UI.updateBanner?.classList.add('hidden');
   });
 
-  UI.btnUpdateAction?.addEventListener('click', () => {
-    API.restartAndInstall();
+  UI.btnUpdateAction?.addEventListener('click', async () => {
+    if (!UI.btnUpdateAction || UI.btnUpdateAction.disabled) return;
+    UI.btnUpdateAction.disabled = true;
+    try {
+      const res = await API.restartAndInstall();
+      if (res && res.success === false) {
+        showToast(`Aggiornamenti: ${res.error}`, 'error', 6000);
+      }
+    } catch (e) {
+      showToast(`Aggiornamenti: ${e.message}`, 'error', 6000);
+    } finally {
+      if (UI.btnUpdateAction) UI.btnUpdateAction.disabled = false;
+    }
   });
 
   API.onUpdateStatus((info) => {
