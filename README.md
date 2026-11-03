@@ -7,9 +7,9 @@ Crunch è un'applicazione desktop per macOS Apple Silicon che registra, trascriv
 [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-000000?logo=apple&logoColor=white)](#integrazione-con-apple)
 [![Engine](https://img.shields.io/badge/engine-whisper.cpp%20%2B%20Metal-2563EB)](#i-modelli-ai-scelta-e-funzionamento)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20locale-15803D)](#privacy-dati-e-sicurezza)
-[![Version](https://img.shields.io/badge/version-1.0.7-6B7280)](#)
+[![Version](https://img.shields.io/badge/version-1.0.8-6B7280)](#)
 
-> **Stato attuale: v1.0.7 — macOS (Apple Silicon).**
+> **Stato attuale: v1.0.8 — macOS (Apple Silicon).**
 > Windows e Linux sono nella roadmap e verranno supportati: vedi [Piattaforme e promessa cross-platform](#piattaforme-e-promessa-cross-platform).
 
 ---
@@ -107,7 +107,7 @@ Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — orga
 
 ## Stato del prodotto
 
-| Area | Disponibile nella v1.0.7 | In roadmap |
+| Area | Disponibile nella v1.0.8 | In roadmap |
 |---|---|---|
 | Registrazione locale | ✅ microfono, pausa/ripresa, WAV 16 kHz | doppia sorgente microfono + sistema |
 | Preprocessing audio | ✅ passa-alto, noise gate, compressore, AGC adattivo, limiter | preset per ambiente |
@@ -118,6 +118,11 @@ Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — orga
 | Gestione modelli | ✅ dormienti: download solo su richiesta, offline dopo il primo scaricamento | verifica integrità e aggiornamento modelli |
 | Intelligenza del contenuto | — | diarizzazione, speaker persistenti, highlight, sintesi citabile |
 | Piattaforme | ✅ macOS Apple Silicon | Windows, Linux |
+
+### Novità della v1.0.8
+
+- **Barra di cattura audio ridisegnata**: accanto a REC compare una capsula dedicata con indicatore `MIC` e stato live. A riposo mostra una traccia tratteggiata; durante la registrazione l'onda diventa un nastro sfumato con alone ambra, il bordo si accende e il punto MIC pulsa in rosso.
+- **Toggle preprocessing più puliti**: rimossi i segni di spunta; i quattro filtri ora sono pillole compatte che si illuminano quando sono attivi, lasciando più respiro alla forma d'onda.
 
 ### Novità della v1.0.7
 
@@ -769,6 +774,7 @@ https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
 | Azione | Come |
 |---|---|
 | Nuova registrazione | pulsante REC in basso |
+| Preprocessing on/off | pillole Passa-alto / Noise Gate / Compressore / Auto-Gain in basso a destra |
 | Pausa / riprendi | pulsante centrale durante la registrazione |
 | Termina e salva | pulsante centrale "Termina" |
 | Torna alla registrazione in corso | pill REC flottante o pulsante REC |

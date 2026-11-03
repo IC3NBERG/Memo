@@ -1741,15 +1741,88 @@ input, select, textarea { font-family: var(--font); }
 
 #waveform-wrap {
   flex: 1;
-  height: 60px;
+  height: 48px;
+  min-width: 120px;
   display: flex;
   align-items: center;
-  min-width: 60px;
+  gap: 11px;
+  padding: 0 14px;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(47, 38, 31, 0.72), rgba(24, 20, 17, 0.72));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -16px 26px rgba(0, 0, 0, 0.22);
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+#waveform-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(120% 160% at 8% 0%, rgba(232, 168, 73, 0.10), transparent 58%);
+  pointer-events: none;
+}
+#waveform-wrap .waveform-canvas-wrap {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  position: relative;
+  z-index: 1;
 }
 #waveform-canvas {
+  display: block;
   width: 100%;
   height: 100%;
-  border-radius: var(--radius-sm);
+}
+
+.waveform-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+.waveform-indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  box-shadow: 0 0 0 3px rgba(124, 110, 92, 0.12);
+  transition: background var(--transition), box-shadow var(--transition);
+}
+.waveform-indicator-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  transition: color var(--transition);
+}
+
+/* Stato attivo: la barra di cattura si accende con la registrazione */
+#rec-controls:has(.rec-btn.recording) ~ #waveform-wrap {
+  background: linear-gradient(180deg, rgba(58, 42, 32, 0.82), rgba(28, 22, 18, 0.82));
+  border-color: rgba(232, 168, 73, 0.38);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 -16px 26px rgba(0, 0, 0, 0.22),
+    0 0 22px rgba(232, 168, 73, 0.10);
+}
+#rec-controls:has(.rec-btn.recording) ~ #waveform-wrap .waveform-indicator-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px rgba(208, 86, 78, 0.18), 0 0 10px rgba(208, 86, 78, 0.75);
+  animation: waveform-dot-pulse 1.4s ease-in-out infinite;
+}
+#rec-controls:has(.rec-btn.recording) ~ #waveform-wrap .waveform-indicator-label {
+  color: var(--accent);
+}
+
+@keyframes waveform-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
 }
 
 #player-controls {
@@ -1800,28 +1873,33 @@ input, select, textarea { font-family: var(--font); }
 .preproc-toggle {
   display: flex;
   align-items: center;
-  gap: 5px;
   cursor: pointer;
   user-select: none;
-  padding: 4px 9px;
-  border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 13px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
   border: 1px solid var(--border);
   transition: all var(--transition);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
+  line-height: 1;
   color: var(--text-dim);
+  white-space: nowrap;
 }
-.preproc-toggle:hover { border-color: var(--accent); color: var(--text); }
+.preproc-toggle:hover {
+  border-color: rgba(232, 168, 73, 0.45);
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.26);
+}
 .preproc-toggle input { display: none; }
-.preproc-toggle .check-icon { display: none; }
 .preproc-toggle:has(input:checked) {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(232, 168, 73, 0.22), rgba(232, 168, 73, 0.10));
+  color: #F3C77B;
+  border-color: rgba(232, 168, 73, 0.48);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 2px 10px rgba(232, 168, 73, 0.10);
 }
-.preproc-toggle:has(input:checked) .check-icon { display: inline-flex; }
-.preproc-toggle .check-icon .memo-icon { width: 12px; height: 12px; }
 .preproc-toggle.disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -2094,7 +2172,8 @@ input, select, textarea { font-family: var(--font); }
    RESPONSIVE / ACCESSIBILITÀ
    ══════════════════════════════════════════════════════════════ */
 @media (max-width: 1080px) {
-  #preprocessing-toggles .preproc-toggle span:last-child { display: none; }
+  #preprocessing-toggles { gap: 4px; }
+  .preproc-toggle { padding: 5px 9px; font-size: 10px; }
   .model-progress-bar { width: 150px; }
 }
 

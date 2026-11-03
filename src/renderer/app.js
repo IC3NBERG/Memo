@@ -234,6 +234,7 @@ const UI = {
   // Bottom Bar (Solo REC e timer)
   btnRec:              $('btn-rec'),
   recTimer:            $('rec-timer'),
+  waveformWrap:        $('waveform-wrap'),
   waveformCanvas:      $('waveform-canvas'),
 
   playerControls:      $('player-controls'),
@@ -246,13 +247,9 @@ const UI = {
 
   // Preprocessing toggles
   toggleHighpass:      $('toggle-highpass'),
-  checkHpSlot:         $('check-hp-slot'),
   toggleNoisegate:     $('toggle-noisegate'),
-  checkNgSlot:         $('check-ng-slot'),
   toggleCompressor:    $('toggle-compressor'),
-  checkCompSlot:       $('check-comp-slot'),
   toggleAutogain:      $('toggle-autogain'),
-  checkGainSlot:       $('check-gain-slot'),
 
   // Modali
   modalFolder:         $('modal-folder'),
@@ -321,10 +318,6 @@ function injectStaticIcons() {
 
   if (UI.iconPlayerPlaySlot) UI.iconPlayerPlaySlot.innerHTML = ICONS.play;
   if (UI.iconVolumeSlot) UI.iconVolumeSlot.innerHTML = ICONS.volume;
-
-  [UI.checkHpSlot, UI.checkNgSlot, UI.checkCompSlot, UI.checkGainSlot].forEach(slot => {
-    if (slot) slot.innerHTML = ICONS.check;
-  });
 
   if (UI.modalNewFolderIconSlot) UI.modalNewFolderIconSlot.innerHTML = ICONS.folderPlus;
   if (UI.modalMoveIconSlot) UI.modalMoveIconSlot.innerHTML = ICONS.move;
@@ -1265,12 +1258,43 @@ function setupWaveform() {
 
 function resizeCanvas() {
   const canvas = UI.waveformCanvas;
-  const wrap = canvas.parentElement;
-  if (!wrap) return;
-  canvas.width = wrap.offsetWidth * window.devicePixelRatio;
-  canvas.height = wrap.offsetHeight * window.devicePixelRatio;
-  canvas.style.width = wrap.offsetWidth + 'px';
-  canvas.style.height = wrap.offsetHeight + 'px';
+  const wrap = canvas?.parentElement;
+  if (!canvas || !wrap) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, wrap.offsetWidth);
+  const h = Math.max(1, wrap.offsetHeight);
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  if (!state.recording) paintIdleWaveform();
+}
+
+// Linea di riposo: traccia sottile e sfumata al centro della barra.
+function paintIdleWaveform() {
+  const canvas = UI.waveformCanvas;
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  const dpr = window.devicePixelRatio || 1;
+
+  ctx.clearRect(0, 0, W, H);
+
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, 'rgba(232, 168, 73, 0)');
+  grad.addColorStop(0.5, 'rgba(232, 168, 73, 0.34)');
+  grad.addColorStop(1, 'rgba(232, 168, 73, 0)');
+
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 1.5 * dpr;
+  ctx.lineCap = 'round';
+  ctx.setLineDash([2 * dpr, 7 * dpr]);
+  ctx.beginPath();
+  ctx.moveTo(0, H / 2);
+  ctx.lineTo(W, H / 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 function drawWaveform() {
@@ -1281,13 +1305,7 @@ function drawWaveform() {
   const analyser = state.analyserNode;
 
   if (!analyser || !state.recording) {
-    ctx.clearRect(0, 0, W, H);
-    ctx.strokeStyle = '#3F3228';
-    ctx.lineWidth = 1 * window.devicePixelRatio;
-    ctx.beginPath();
-    ctx.moveTo(0, H / 2);
-    ctx.lineTo(W, H / 2);
-    ctx.stroke();
+    paintIdleWaveform();
     return;
   }
 
@@ -1299,29 +1317,42 @@ function drawWaveform() {
 
   ctx.clearRect(0, 0, W, H);
 
-  const grad = ctx.createLinearGradient(0, 0, W, 0);
-  grad.addColorStop(0, '#D4723C');
-  grad.addColorStop(0.5, '#E8A849');
-  grad.addColorStop(1, '#D4723C');
-
-  ctx.lineWidth = 2 * window.devicePixelRatio;
-  ctx.strokeStyle = grad;
-  ctx.shadowColor = '#E8A849';
-  ctx.shadowBlur = 6;
-  ctx.beginPath();
-
+  const dpr = window.devicePixelRatio || 1;
+  const mid = H / 2;
   const sliceWidth = W / bufLen;
-  let x = 0;
+  const points = new Array(bufLen);
 
   for (let i = 0; i < bufLen; i++) {
-    const v = dataArray[i] / 128.0;
-    const y = (v * H) / 2;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-    x += sliceWidth;
+    const v = (dataArray[i] - 128) / 128;
+    points[i] = { x: i * sliceWidth, y: mid + v * mid * 0.78 };
   }
 
-  ctx.lineTo(W, H / 2);
+  // Nastro simmetrico: dà corpo all'onda senza appesantirla.
+  const fill = ctx.createLinearGradient(0, 0, 0, H);
+  fill.addColorStop(0, 'rgba(232, 168, 73, 0.20)');
+  fill.addColorStop(0.5, 'rgba(232, 168, 73, 0.04)');
+  fill.addColorStop(1, 'rgba(232, 168, 73, 0.20)');
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < bufLen; i++) ctx.lineTo(points[i].x, points[i].y);
+  for (let i = bufLen - 1; i >= 0; i--) ctx.lineTo(points[i].x, H - points[i].y);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, '#D4723C');
+  grad.addColorStop(0.5, '#F3C476');
+  grad.addColorStop(1, '#D4723C');
+
+  ctx.lineWidth = 1.8 * dpr;
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = grad;
+  ctx.shadowColor = 'rgba(232, 168, 73, 0.7)';
+  ctx.shadowBlur = 8 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < bufLen; i++) ctx.lineTo(points[i].x, points[i].y);
   ctx.stroke();
   ctx.shadowBlur = 0;
 }
@@ -2033,16 +2064,10 @@ function loadAudio(src) {
 }
 
 function showPlayerOrWaveform(which) {
-  if (which === 'player') {
-    UI.playerControls.classList.remove('hidden');
-    UI.waveformCanvas.parentElement.style.flex = '0';
-    UI.waveformCanvas.parentElement.style.width = '0';
-  } else {
-    UI.playerControls.classList.add('hidden');
-    UI.waveformCanvas.parentElement.style.flex = '1';
-    UI.waveformCanvas.parentElement.style.width = '';
-    resizeCanvas();
-  }
+  const isPlayer = which === 'player';
+  UI.playerControls.classList.toggle('hidden', !isPlayer);
+  UI.waveformWrap.classList.toggle('hidden', isPlayer);
+  if (!isPlayer) resizeCanvas();
 }
 
 // ══════════════════════════════════════════════════════════════

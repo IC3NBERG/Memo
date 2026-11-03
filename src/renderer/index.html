@@ -80,7 +80,7 @@
 
       <div id="sidebar-footer">
         <div class="footer-row">
-          <span class="app-version" id="app-version-label">Crunch v1.0.7</span>
+          <span class="app-version" id="app-version-label">Crunch v1.0.8</span>
           <button id="btn-check-updates" class="btn-secondary btn-xs" title="Controlla aggiornamenti">
             <span class="btn-icon" id="icon-update-slot"></span>
             <span>Update</span>
@@ -299,9 +299,15 @@
         <span id="rec-timer" class="rec-timer">00:00:00</span>
       </div>
 
-      <!-- Waveform audio attiva -->
+      <!-- Barra di cattura audio -->
       <div id="waveform-wrap">
-        <canvas id="waveform-canvas"></canvas>
+        <div class="waveform-indicator" aria-hidden="true">
+          <span class="waveform-indicator-dot"></span>
+          <span class="waveform-indicator-label">MIC</span>
+        </div>
+        <div class="waveform-canvas-wrap">
+          <canvas id="waveform-canvas"></canvas>
+        </div>
       </div>
 
       <!-- Player audio quando riproduce una nota -->
@@ -319,22 +325,18 @@
       <div id="preprocessing-toggles">
         <label class="preproc-toggle" title="Filtro passa-alto (80 Hz): rimuove condizionatori e rombi bassi">
           <input type="checkbox" id="toggle-highpass" checked />
-          <span class="check-icon" id="check-hp-slot"></span>
           <span>Passa-alto</span>
         </label>
         <label class="preproc-toggle" title="Noise Gate (−45 dB): silenzia il rumore di fondo d'aula">
           <input type="checkbox" id="toggle-noisegate" checked />
-          <span class="check-icon" id="check-ng-slot"></span>
           <span>Noise Gate</span>
         </label>
         <label class="preproc-toggle" title="Compressore dinamico: livella la voce e riduce i picchi">
           <input type="checkbox" id="toggle-compressor" checked />
-          <span class="check-icon" id="check-comp-slot"></span>
           <span>Compressore</span>
         </label>
         <label class="preproc-toggle" title="Guadagno automatico (AGC): voce uniforme a ogni distanza">
           <input type="checkbox" id="toggle-autogain" checked />
-          <span class="check-icon" id="check-gain-slot"></span>
           <span>Auto-Gain</span>
         </label>
       </div>
