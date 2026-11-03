@@ -7,9 +7,9 @@ Crunch è un'applicazione desktop per macOS Apple Silicon che registra, trascriv
 [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-000000?logo=apple&logoColor=white)](#integrazione-con-apple)
 [![Engine](https://img.shields.io/badge/engine-whisper.cpp%20%2B%20Metal-2563EB)](#i-modelli-ai-scelta-e-funzionamento)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20locale-15803D)](#privacy-dati-e-sicurezza)
-[![Version](https://img.shields.io/badge/version-1.0.6-6B7280)](#)
+[![Version](https://img.shields.io/badge/version-1.0.7-6B7280)](#)
 
-> **Stato attuale: v1.0.6 — macOS (Apple Silicon).**
+> **Stato attuale: v1.0.7 — macOS (Apple Silicon).**
 > Windows e Linux sono nella roadmap e verranno supportati: vedi [Piattaforme e promessa cross-platform](#piattaforme-e-promessa-cross-platform).
 
 ---
@@ -107,15 +107,25 @@ Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — orga
 
 ## Stato del prodotto
 
-| Area | Disponibile nella v1.0.6 | In roadmap |
+| Area | Disponibile nella v1.0.7 | In roadmap |
 |---|---|---|
 | Registrazione locale | ✅ microfono, pausa/ripresa, WAV 16 kHz | doppia sorgente microfono + sistema |
+| Preprocessing audio | ✅ passa-alto, noise gate, compressore, AGC adattivo, limiter | preset per ambiente |
 | Trascrizione | ✅ live a chunk e completa al 100% | word-level timestamp |
-| Lingue | ✅ rilevamento automatico, traduzione in inglese | selezione esplicita del modello |
+| Lingue | ✅ rilevamento automatico, traduzione in inglese con modello dedicato | selezione esplicita del modello |
 | Organizzazione | ✅ gruppi, rinomina, spostamento, anti-sovrascrittura | sezioni manuali, blocchi |
 | Consultazione | ✅ ricerca testuale, timestamp, player, copia, export | ricerca FTS5, seek dal timestamp |
+| Gestione modelli | ✅ dormienti: download solo su richiesta, offline dopo il primo scaricamento | verifica integrità e aggiornamento modelli |
 | Intelligenza del contenuto | — | diarizzazione, speaker persistenti, highlight, sintesi citabile |
 | Piattaforme | ✅ macOS Apple Silicon | Windows, Linux |
+
+### Novità della v1.0.7
+
+- **Preprocessing audio reale**: passa-alto 80 Hz, noise gate con isteresi e hold, compressore dinamico, AGC adattivo e limiter finale, tutti descritti nella sezione [Preprocessing audio](#2-preprocessing-audio).
+- **Traduzione in inglese effettiva**: nuovo modello dedicato `ggml-medium`, perché `large-v3-turbo` non esegue il task `translate`. In live, se il modello manca, l'anteprima resta in lingua originale con un avviso.
+- **Modelli dormienti**: nessun download o caricamento all'avvio; il modello necessario viene richiesto con una conferma esplicita al primo utilizzo.
+- **Interfaccia ridisegnata**: sidebar a gruppi più leggibile, banner a stack per download e aggiornamenti, logo animato nello stato vuoto, animazioni durante la trascrizione e pill REC flottante per tornare alla registrazione in corso.
+- **Registrazione e note indipendenti**: cambiare nota mentre si registra non sovrappone più le viste e la trascrizione live non scrive nella nota aperta.
 
 ---
 
@@ -131,7 +141,7 @@ Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — orga
                                │
 ┌──────────────────────────────▼───────────────────────────────────────┐
 │ 2. PREPROCESSING (4 controlli, attivi per default)                   │
-│    passa-alto 80 Hz → noise gate -45 dB → compressore → auto-gain    │
+│    passa-alto 80 Hz → noise gate → compressore → AGC → limiter       │
 └──────────────────────────────┬───────────────────────────────────────┘
                                │
               ┌────────────────┴─────────────────┐
@@ -170,10 +180,13 @@ I quattro controlli formano una catena DSP costruita con la Web Audio API:
 
 | Stadio | Parametro | Funzione |
 |---|---|---|
-| **Passa-alto** | 80 Hz, Q 0.7 | rimuove rimbombi, passi, vibrazioni del tavolo e rumore di condizionatori |
-| **Noise gate** | soglia −45 dB, isteresi 20/120 ms | chiude il segnale nelle pause, riducendo fruscio e respiri |
-| **Compressore** | threshold −48 dB, knee 10, ratio 6:1, attack 3 ms, release 150 ms | rende comprensibili i passaggi a bassa voce senza saturare le esclamazioni |
-| **Auto-gain** | guadagno 2.4× | mantiene uniforme il volume se chi parla si muove |
+| **Passa-alto** | 80 Hz, Q 0,707 (Butterworth) | rimuove rimbombi, passi, vibrazioni del tavolo e rumore a bassa frequenza |
+| **Noise gate** | apertura −42 dB, chiusura −50 dB, hold 250 ms, floor −60 dB | chiude il segnale nelle pause con isteresi e attenuazione morbida, senza tagliare l'attacco delle parole |
+| **Compressore** | threshold −28 dB, knee 18 dB, ratio 3,5:1, attack 6 ms, release 220 ms, makeup +3 dB | rende comprensibili i passaggi a bassa voce senza saturare le esclamazioni |
+| **Auto-gain (AGC)** | target −20 dBFS, guadagno adattivo 0,5×–8×, aggiornato ogni 100 ms | mantiene uniforme il volume se chi parla si muove o si allontana dal microfono |
+| **Limiter** | ceiling −2 dB | evita saturazione e clipping sui picchi improvvisi |
+
+L'AGC è reale: misura l'RMS del segnale e corregge il guadagno nel tempo, con riduzione rapida dei picchi e aumento graduale per evitare il "pompaggio". Il limiter finale è sempre attivo, mentre i quattro toggle si applicano dalla registrazione successiva: durante una REC sono bloccati per non alterare l'audio a metà lezione.
 
 La stessa catena alimenta tre rami: il **MediaRecorder** per il file definitivo, lo **ScriptProcessor** per i chunk live e un **AnalyserNode** per la forma d'onda a 60 fps.
 
@@ -264,7 +277,7 @@ Tutti i dati risiedono in `~/CrunchRecordings/`; le installazioni precedenti mig
 ~/CrunchRecordings/
 ├── .models/
 │   ├── ggml-large-v3-turbo.bin   # modello principale (~1,5 GB)
-│   └── ggml-medium.bin           # modello per la traduzione in inglese (~1,5 GB)
+│   └── ggml-medium.bin           # modello per la traduzione in inglese (~1,4 GB)
 ├── _unsorted/                    # registrazioni senza gruppo
 └── <Gruppo>/
     └── 2026-11-03_09-15-00_Diritto Privato/
@@ -323,12 +336,14 @@ Il modello è **multilingua** e rileva automaticamente la lingua (`--language au
 
 | Modello | File | Dimensione | Ruolo | Download |
 |---|---|---|---|---|
-| **large-v3-turbo** | `ggml-large-v3-turbo.bin` | ≈1,5 GB | trascrizione (live e completa) | al primo avvio, automatico |
-| **medium** | `ggml-medium.bin` | ≈1,5 GB | traduzione in inglese | solo su richiesta dell'utente |
+| **large-v3-turbo** | `ggml-large-v3-turbo.bin` | ≈1,5 GB | trascrizione (live e completa) | alla prima trascrizione richiesta |
+| **medium** | `ggml-medium.bin` | ≈1,4 GB | traduzione in inglese | solo quando si sceglie "Traduci" |
+
+**Modelli dormienti.** All'avvio Crunch verifica soltanto la presenza dei file: non scarica e non carica alcun modello. L'app parte subito e resta leggera; il download viene proposto con una conferma esplicita nel momento in cui la funzione viene richiesta. Dopo il primo scaricamento i modelli restano disponibili offline in `~/CrunchRecordings/.models/`.
 
 **Perché `large-v3-turbo` come default.** È un large-v3 con decoder ridotto a 4 layer (≈809 milioni di parametri): conserva l'encoder e quindi la qualità acustica del large-v3, ma decodifica con maggiore velocità. È il compromesso più adatto a sessioni lunghe su un laptop.
 
-**Perché un modello separato per la traduzione.** `large-v3-turbo` è addestrato al task *transcribe* e non esegue in modo affidabile il task *translate*. Crunch non forza il modello su un compito per cui non è ottimizzato: usa `medium`, scaricato **solo su richiesta esplicita** e mantenuto inattivo finché non serve. Questo evita di occupare ~1,5 GB aggiuntivi per chi non traduce.
+**Perché un modello separato per la traduzione.** `large-v3-turbo` è addestrato al task *transcribe* e non esegue in modo affidabile il task *translate*: verificato sul binario incluso, restituisce il testo in lingua originale. Crunch non forza il modello su un compito per cui non è ottimizzato: usa `medium`, scaricato **solo su richiesta esplicita** e mantenuto inattivo finché non serve. Questo evita di occupare ~1,4 GB aggiuntivi per chi non traduce.
 
 **Perché non `large-v3` di default.** Richiede più RAM, più tempo e più batteria per un beneficio non sempre percepibile. Il piano è renderlo **selezionabile** per chi necessita della massima accuratezza.
 
@@ -345,7 +360,7 @@ Il modello è **multilingua** e rileva automaticamente la lingua (`--language au
                         │ sì           │ no
                         ▼              ▼
               ggml-medium.bin     ggml-large-v3-turbo.bin
-              (scarica se manca)  (scarica al primo avvio)
+              (scarica se manca)  (scarica alla prima trascrizione)
                         │              │
                         └──────┬───────┘
                                ▼
@@ -357,7 +372,8 @@ Regole implementate in `src/main/main.js`:
 
 - `model:check` verifica il modello di trascrizione; `model:check-translation` quello di traduzione.
 - Se il modello richiesto manca, l'IPC restituisce un codice esplicito (`model-missing` / `translation-model-missing`) e la UI propone il download: nessun errore silenzioso.
-- I download sono in streaming su file `.tmp` e vengono rinominati solo al completamento, con supporto ai redirect (Hugging Face → CDN) e limite di 10 redirect.
+- Se in modalità live manca il modello di traduzione, l'anteprima continua in lingua originale con un avviso una tantum, invece di interrompere la lezione.
+- I download sono in streaming su file `.tmp`, protetti da avvii concorrenti, e vengono rinominati solo al completamento, con supporto ai redirect (Hugging Face → CDN) e limite di 10 redirect.
 - La trascrizione live rifiuta chunk troppo corti (< 0,4 s) o troppo silenziosi (< −50 dB RMS).
 - Una sola trascrizione completa alla volta (`activeTranscription`): nessun processo concorrente che competa per la GPU.
 
@@ -418,7 +434,7 @@ Audio, trascrizioni, metadati, nomi dei gruppi, note e modelli **restano in `~/C
 
 | Connessione | Momento | Dati inviati |
 |---|---|---|
-| Download modello da Hugging Face | primo avvio / prima traduzione | solo la richiesta HTTP del file |
+| Download modello da Hugging Face | prima trascrizione / prima traduzione richiesta | solo la richiesta HTTP del file |
 | Controllo aggiornamenti su GitHub Releases | all'avvio e ogni 3 ore | versione client e richiesta di metadati release |
 | Download aggiornamento | quando disponibile | nessun dato utente |
 
@@ -650,7 +666,7 @@ npm install
 npm start
 ```
 
-Al primo avvio Crunch crea `~/CrunchRecordings/` e scarica `ggml-large-v3-turbo.bin` (≈1,5 GB).
+Al primo avvio Crunch crea `~/CrunchRecordings/` ma **non scarica alcun modello**. Il download di `ggml-large-v3-turbo.bin` (≈1,5 GB) viene proposto alla prima trascrizione e quello di `ggml-medium.bin` (≈1,4 GB) alla prima traduzione.
 
 ### Compilare whisper.cpp con Metal
 
@@ -700,7 +716,7 @@ Vedi `RELEASE_WORKFLOW.md` per la procedura operativa completa.
 | Formato intermedio | WebM/Opus (MediaRecorder) |
 | Spazio audio | ≈115 MB per ora (16 kHz × 16 bit × 3600 s) |
 | Modello trascrizione | ≈1,5 GB |
-| Modello traduzione | ≈1,5 GB |
+| Modello traduzione | ≈1,4 GB |
 | Thread CPU ASR | 4 |
 | Intervallo live | 3,5 s |
 | Soglia silenzio live | −50 dB RMS |
@@ -755,6 +771,7 @@ https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
 | Nuova registrazione | pulsante REC in basso |
 | Pausa / riprendi | pulsante centrale durante la registrazione |
 | Termina e salva | pulsante centrale "Termina" |
+| Torna alla registrazione in corso | pill REC flottante o pulsante REC |
 | Apri nota | clic sulla registrazione nella sidebar |
 | Chiudi nota | pulsante "Chiudi" o `Esc` |
 | Rinomina nota | doppio clic sul titolo |
@@ -767,7 +784,7 @@ https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
 
 | Sintomo | Causa probabile | Rimedio |
 |---|---|---|
-| "Modello Whisper non trovato" | download non completato | riaprire l'app e attendere il download; verificare `~/CrunchRecordings/.models/` |
+| "Modello Whisper non trovato" | download non ancora eseguito | avviare una trascrizione e accettare il download; verificare `~/CrunchRecordings/.models/` |
 | "Modello di traduzione non trovato" | `ggml-medium.bin` assente | avviare una traduzione e accettare il download |
 | "whisper-cli non trovato" | build nativa assente | eseguire `npm run build-whisper` |
 | Nessun audio o trascrizione vuota | permesso microfono negato | Impostazioni di Sistema → Privacy → Microfono |
@@ -801,7 +818,7 @@ Queste assenze sono deliberate e tracciate: la roadmap costituisce la lista dell
 No. L'inferenza avviene in locale con whisper.cpp. La rete serve solo per scaricare i modelli e controllare gli aggiornamenti.
 
 **Serve una connessione a internet per usarlo?**
-Solo al primo avvio, per il download dei modelli. Successivamente funziona offline.
+Solo per il primo download dei modelli, quando richiedi la prima trascrizione o la prima traduzione. All'avvio non viene scaricato nulla: successivamente l'app funziona offline.
 
 **Posso usarlo su un Mac Intel?**
 No: la build è arm64 e il motore è compilato per Apple Silicon. Il supporto ad altre architetture non è in roadmap a breve.
@@ -821,7 +838,7 @@ Le registrazioni risiedono in `~/CrunchRecordings/` e non vengono cancellate dal
 **Posso spostare l'archivio su un altro Mac?**
 Sì: copiare `~/CrunchRecordings/` e i modelli in `.models/`, oppure lasciare che vengano riscaricati.
 
-**Perché due modelli da 1,5 GB?**
+**Perché due modelli da 1,4–1,5 GB?**
 Perché la traduzione richiede un modello addestrato al task `translate`; il modello di trascrizione non è adatto. Il secondo viene scaricato solo se richiesto.
 
 **Crunch è adatto a un uso professionale?**
