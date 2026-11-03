@@ -25,6 +25,11 @@ const MODELS_DIR = path.join(RECORDINGS_DIR, '.models');
 const UNSORTED_DIR = path.join(RECORDINGS_DIR, '_unsorted');
 const MODEL_FILENAME = 'ggml-large-v3-turbo.bin';
 
+// Modello dedicato alla traduzione verso l'inglese.
+// large-v3-turbo non è addestrato al task "translate": per questo la traduzione
+// usa un modello separato, scaricato SOLO quando l'utente la richiede davvero.
+const TRANSLATION_MODEL_FILENAME = 'ggml-medium.bin';
+
 function getModelPath() {
   const primary = path.join(MODELS_DIR, MODEL_FILENAME);
   if (fs.existsSync(primary)) return primary;
@@ -33,7 +38,16 @@ function getModelPath() {
   return primary;
 }
 
+function getTranslationModelPath() {
+  const primary = path.join(MODELS_DIR, TRANSLATION_MODEL_FILENAME);
+  if (fs.existsSync(primary)) return primary;
+  const fallbackOld = path.join(OLD_MEMO_DIR, '.models', TRANSLATION_MODEL_FILENAME);
+  if (fs.existsSync(fallbackOld)) return fallbackOld;
+  return primary;
+}
+
 const MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin';
+const TRANSLATION_MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin';
 
 // Percorso al binario whisper-cli (dentro l'app oppure nella dir di sviluppo)
 function getWhisperBinPath() {
@@ -329,31 +343,40 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// ─── IPC: Stato modello ────────────────────────────────────────────────────
+// ─── IPC: Stato modelli ────────────────────────────────────────────────────
 ipcMain.handle('model:check', () => {
   return fs.existsSync(getModelPath());
 });
 
-// ─── IPC: Download modello ─────────────────────────────────────────────────
-ipcMain.on('model:download', (event) => {
-  const currentModelPath = getModelPath();
-  if (fs.existsSync(currentModelPath)) {
-    event.sender.send('model:download-done');
-    return;
-  }
+ipcMain.handle('model:check-translation', () => {
+  return fs.existsSync(getTranslationModelPath());
+});
 
-  const targetPath = path.join(MODELS_DIR, MODEL_FILENAME);
+// ─── Download modello generico (riutilizzato per trascrizione e traduzione) ─
+const activeModelDownloads = new Set();
+
+function downloadModelFile({ url, targetPath, onProgress, onDone, onError }) {
+  // Evita download concorrenti dello stesso modello (stesso file temporaneo).
+  if (activeModelDownloads.has(targetPath)) return;
+  activeModelDownloads.add(targetPath);
+
   const tmpPath = targetPath + '.tmp';
+  const finish = (cb) => {
+    activeModelDownloads.delete(targetPath);
+    cb();
+  };
+  const fail = (message) => finish(() => onError(message));
+  const succeed = () => finish(onDone);
 
-  function startDownload(url, redirectCount = 0) {
+  function startDownload(currentUrl, redirectCount = 0) {
     if (redirectCount > 10) {
-      event.sender.send('model:download-error', 'Troppi redirect');
+      fail('Troppi redirect');
       return;
     }
 
-    const proto = url.startsWith('https') ? https : http;
+    const proto = currentUrl.startsWith('https') ? https : http;
 
-    const req = proto.get(url, (res) => {
+    const req = proto.get(currentUrl, (res) => {
       if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
         const location = res.headers['location'];
         res.destroy();
@@ -362,7 +385,7 @@ ipcMain.on('model:download', (event) => {
       }
 
       if (res.statusCode !== 200) {
-        event.sender.send('model:download-error', `HTTP ${res.statusCode}`);
+        fail(`HTTP ${res.statusCode}`);
         return;
       }
 
@@ -376,7 +399,7 @@ ipcMain.on('model:download', (event) => {
         downloaded += chunk.length;
         if (totalSize > 0) {
           const pct = Math.round((downloaded / totalSize) * 100);
-          event.sender.send('model:download-progress', { downloaded, total: totalSize, percent: pct });
+          onProgress({ downloaded, total: totalSize, percent: pct });
         }
       });
 
@@ -384,25 +407,59 @@ ipcMain.on('model:download', (event) => {
         file.close(() => {
           try {
             fs.renameSync(tmpPath, targetPath);
-            event.sender.send('model:download-done');
+            succeed();
           } catch (e) {
-            event.sender.send('model:download-error', e.message);
+            fail(e.message);
           }
         });
       });
 
       file.on('error', (err) => {
         fs.unlink(tmpPath, () => {});
-        event.sender.send('model:download-error', err.message);
+        fail(err.message);
       });
     });
 
     req.on('error', (err) => {
-      event.sender.send('model:download-error', err.message);
+      fail(err.message);
     });
   }
 
-  startDownload(MODEL_URL);
+  startDownload(url);
+}
+
+// ─── IPC: Download modello trascrizione ────────────────────────────────────
+ipcMain.on('model:download', (event) => {
+  const targetPath = path.join(MODELS_DIR, MODEL_FILENAME);
+  if (fs.existsSync(getModelPath())) {
+    event.sender.send('model:download-done');
+    return;
+  }
+
+  downloadModelFile({
+    url: MODEL_URL,
+    targetPath,
+    onProgress: (data) => event.sender.send('model:download-progress', data),
+    onDone: () => event.sender.send('model:download-done'),
+    onError: (err) => event.sender.send('model:download-error', err),
+  });
+});
+
+// ─── IPC: Download modello traduzione (solo su richiesta esplicita) ────────
+ipcMain.on('model:download-translation', (event) => {
+  const targetPath = path.join(MODELS_DIR, TRANSLATION_MODEL_FILENAME);
+  if (fs.existsSync(getTranslationModelPath())) {
+    event.sender.send('model:translation-done');
+    return;
+  }
+
+  downloadModelFile({
+    url: TRANSLATION_MODEL_URL,
+    targetPath,
+    onProgress: (data) => event.sender.send('model:translation-progress', data),
+    onDone: () => event.sender.send('model:translation-done'),
+    onError: (err) => event.sender.send('model:translation-error', err),
+  });
 });
 
 // ─── IPC: Salva audio WAV (Anti-sovrascrittura garantita) ───────────────────
@@ -487,9 +544,18 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
     return;
   }
 
-  const currentModelPath = getModelPath();
+  const isTranslate = !!translate;
+
+  // La traduzione richiede un modello dedicato: large-v3-turbo non esegue
+  // il task "translate". Il modello viene usato solo se già scaricato.
+  const currentModelPath = isTranslate ? getTranslationModelPath() : getModelPath();
   if (!fs.existsSync(currentModelPath)) {
-    event.sender.send('transcription:error', 'Modello Whisper non trovato in ~/CrunchRecordings/.models.');
+    event.sender.send('transcription:error', {
+      code: isTranslate ? 'translation-model-missing' : 'model-missing',
+      message: isTranslate
+        ? 'Modello di traduzione non trovato. Scaricalo per tradurre in inglese.'
+        : 'Modello Whisper non trovato in ~/CrunchRecordings/.models.',
+    });
     return;
   }
 
@@ -604,9 +670,14 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
 
 // ─── IPC: Trascrizione Chunk Live (Ultra-rapida Metal) ──────────────────────
 ipcMain.handle('transcription:chunk', async (event, { buffer, language, translate }) => {
-  const currentModelPath = getModelPath();
+  const isTranslate = !!translate;
+  const currentModelPath = isTranslate ? getTranslationModelPath() : getModelPath();
   if (!fs.existsSync(currentModelPath)) {
-    return { success: false, error: 'Modello non pronto' };
+    return {
+      success: false,
+      code: isTranslate ? 'translation-model-missing' : 'model-missing',
+      error: isTranslate ? 'Modello di traduzione non pronto' : 'Modello non pronto',
+    };
   }
   const whisperBin = getWhisperBinPath();
   if (!fs.existsSync(whisperBin)) {

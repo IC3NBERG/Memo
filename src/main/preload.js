@@ -10,6 +10,13 @@ const api = {
   onModelDone: (cb) => ipcRenderer.on('model:download-done', () => cb()),
   onModelError: (cb) => ipcRenderer.on('model:download-error', (_, err) => cb(err)),
 
+  // Modello dedicato alla traduzione (dormiente finché non richiesto)
+  modelCheckTranslation: () => ipcRenderer.invoke('model:check-translation'),
+  modelDownloadTranslation: () => ipcRenderer.send('model:download-translation'),
+  onTranslationModelProgress: (cb) => ipcRenderer.on('model:translation-progress', (_, data) => cb(data)),
+  onTranslationModelDone: (cb) => ipcRenderer.on('model:translation-done', () => cb()),
+  onTranslationModelError: (cb) => ipcRenderer.on('model:translation-error', (_, err) => cb(err)),
+
   // Registrazione
   recordingSave: (data) => ipcRenderer.invoke('recording:save', data),
   recordingUpdateDuration: (data) => ipcRenderer.invoke('recording:update-duration', data),

@@ -19,30 +19,33 @@
     </div>
   </div>
 
-  <!-- ── BANNER DOWNLOAD MODELLO ───────────────────────────── -->
-  <div id="model-banner" class="hidden">
-    <div class="model-banner-inner">
-      <span class="model-banner-icon" id="model-icon-slot"></span>
-      <div class="model-banner-text">
-        <strong>Modello Whisper richiesto</strong>
-        <span id="model-banner-desc">Scaricamento del modello AI (≈1.5 GB)…</span>
-      </div>
-      <div class="model-progress-wrap">
-        <div class="model-progress-bar">
-          <div id="model-progress-fill"></div>
+  <!-- ── STACK BANNER (download modello / aggiornamenti) ───── -->
+  <div id="banner-stack">
+    <!-- BANNER DOWNLOAD MODELLO -->
+    <div id="model-banner" class="hidden">
+      <div class="model-banner-inner">
+        <span class="model-banner-icon" id="model-icon-slot"></span>
+        <div class="model-banner-text">
+          <strong id="model-banner-title">Modello Whisper richiesto</strong>
+          <span id="model-banner-desc">Scaricamento del modello AI (≈1,5 GB)…</span>
         </div>
-        <span id="model-progress-pct">0%</span>
+        <div class="model-progress-wrap">
+          <div class="model-progress-bar">
+            <div id="model-progress-fill"></div>
+          </div>
+          <span id="model-progress-pct">0%</span>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- ── BANNER AGGIORNAMENTI ───────────────────────────────── -->
-  <div id="update-banner" class="hidden">
-    <div class="update-banner-inner">
-      <span class="update-banner-icon" id="update-icon-slot"></span>
-      <span id="update-banner-text">Nuovo aggiornamento disponibile.</span>
-      <button id="btn-update-action" class="btn-primary btn-sm">Riavvia e Aggiorna</button>
-      <button id="btn-update-dismiss" class="tb-btn" title="Chiudi avviso" id="btn-dismiss-slot">✕</button>
+    <!-- BANNER AGGIORNAMENTI -->
+    <div id="update-banner" class="hidden">
+      <div class="update-banner-inner">
+        <span class="update-banner-icon" id="update-icon-slot"></span>
+        <span id="update-banner-text">Nuovo aggiornamento disponibile.</span>
+        <button id="btn-update-action" class="btn-primary btn-sm">Riavvia e Aggiorna</button>
+        <button id="btn-update-dismiss" class="tb-btn" title="Chiudi avviso">✕</button>
+      </div>
     </div>
   </div>
 
@@ -77,7 +80,7 @@
 
       <div id="sidebar-footer">
         <div class="footer-row">
-          <span class="app-version" id="app-version-label">Crunch v1.0.6</span>
+          <span class="app-version" id="app-version-label">Crunch v1.0.7</span>
           <button id="btn-check-updates" class="btn-secondary btn-xs" title="Controlla aggiornamenti">
             <span class="btn-icon" id="icon-update-slot"></span>
             <span>Update</span>
@@ -91,6 +94,14 @@
 
     <!-- AREA CENTRALE -->
     <main id="main-area">
+      <!-- Pill flottante: torna alla registrazione in corso -->
+      <button id="recording-pill" class="recording-pill hidden" title="Torna alla registrazione in corso">
+        <span class="recording-pill-dot"></span>
+        <span class="recording-pill-label">REC</span>
+        <span id="recording-pill-timer">00:00:00</span>
+        <span class="recording-pill-action">Torna</span>
+      </button>
+
       <!-- stato: nessuna selezione -->
       <div id="empty-state" class="center-placeholder">
         <div class="empty-icon-wrap" id="empty-icon-slot"></div>
@@ -232,7 +243,7 @@
               </label>
               <select id="select-transcribe-mode">
                 <option value="transcribe" selected>Trascrivi (lingua originale)</option>
-                <option value="translate">Traduci in Inglese</option>
+                <option value="translate">Traduci in inglese</option>
               </select>
             </div>
           </div>
@@ -255,6 +266,21 @@
           <div id="transcript-content" contenteditable="true" spellcheck="true"
                data-placeholder="La trascrizione apparirà qui. Puoi modificarla direttamente o digitare note personali."></div>
           <div id="timestamps-margin"></div>
+
+          <!-- Overlay animato durante la trascrizione -->
+          <div id="transcribe-overlay" class="transcribe-overlay hidden">
+            <div class="transcribe-orb">
+              <span class="transcribe-orb-ring"></span>
+              <span class="transcribe-orb-core"></span>
+            </div>
+            <div class="transcribe-overlay-title" id="transcribe-overlay-title">Trascrizione in corso…</div>
+            <div class="transcribe-overlay-sub" id="transcribe-overlay-sub">Elaborazione con GPU Metal</div>
+            <div class="transcribe-skeleton">
+              <span style="width: 82%"></span>
+              <span style="width: 96%"></span>
+              <span style="width: 64%"></span>
+            </div>
+          </div>
         </div>
       </div>
     </main>
@@ -291,22 +317,22 @@
 
       <!-- Toggle preprocessing -->
       <div id="preprocessing-toggles">
-        <label class="preproc-toggle" title="Filtro passa-alto (80Hz): rimuove condizionatori e rombi bassi">
+        <label class="preproc-toggle" title="Filtro passa-alto (80 Hz): rimuove condizionatori e rombi bassi">
           <input type="checkbox" id="toggle-highpass" checked />
           <span class="check-icon" id="check-hp-slot"></span>
-          <span>High-Pass</span>
+          <span>Passa-alto</span>
         </label>
-        <label class="preproc-toggle" title="Noise Gate: silenzia il rumore di fondo d'aula">
+        <label class="preproc-toggle" title="Noise Gate (−45 dB): silenzia il rumore di fondo d'aula">
           <input type="checkbox" id="toggle-noisegate" checked />
           <span class="check-icon" id="check-ng-slot"></span>
           <span>Noise Gate</span>
         </label>
-        <label class="preproc-toggle" title="Compressore dinamico: amplifica docenti distanti">
+        <label class="preproc-toggle" title="Compressore dinamico: livella la voce e riduce i picchi">
           <input type="checkbox" id="toggle-compressor" checked />
           <span class="check-icon" id="check-comp-slot"></span>
-          <span>Compressor</span>
+          <span>Compressore</span>
         </label>
-        <label class="preproc-toggle" title="Guadagno adattivo (Auto-Gain): voce lontana nitida">
+        <label class="preproc-toggle" title="Guadagno automatico (AGC): voce uniforme a ogni distanza">
           <input type="checkbox" id="toggle-autogain" checked />
           <span class="check-icon" id="check-gain-slot"></span>
           <span>Auto-Gain</span>
@@ -406,12 +432,12 @@
           </div>
           <div class="info-card-grid">
             <div class="info-card">
-              <strong>Cattura Audio 16 kHz Float32</strong>
-              <p>L'audio viene acquisito dal microfono a 16.000 Hz mono in formato WAV PCM lineare, frequenza nativa ottimale dei modelli neurali Whisper che evita artefatti di ricampionamento.</p>
+              <strong>Cattura Audio 16 kHz Mono</strong>
+              <p>L'audio viene acquisito dal microfono a 16.000 Hz mono, elaborato dalla pipeline DSP (passa-alto, gate, compressore, AGC e limiter) e salvato in WAV PCM lineare: la frequenza nativa ottimale per i modelli Whisper, senza artefatti di ricampionamento.</p>
             </div>
             <div class="info-card">
               <strong>Forma d'Onda Realtime</strong>
-              <p>Un analizzatore FFT dedicato elabora lo spettro sonoro a 60 fps per visualizzare visivamente la presenza della voce del docente e il livello di gain.</p>
+              <p>Un analizzatore audio nel dominio del tempo elabora il segnale a 60 fps per visualizzare la presenza della voce del docente e il livello effettivo dopo il preprocessing.</p>
             </div>
             <div class="info-card">
               <strong>Trascrizione Live Istantanea (3.5s)</strong>
@@ -422,8 +448,8 @@
               <p>Al termine, aprendo la nota e cliccando su "Trascrivi / Perfeziona", l'intera traccia originale <code>audio.wav</code> viene decodificata con accuratezza al 100%, recuperando qualsiasi parola non inclusa nell'anteprima live.</p>
             </div>
             <div class="info-card full-width">
-              <strong>Traduzione Automatica ("Traduci in Inglese")</strong>
-              <p>Sfrutta la decodifica multilingua di Whisper: lezioni e conferenze in italiano, spagnolo, francese o tedesco vengono tradotte direttamente in inglese fluente senza cloud.</p>
+              <strong>Traduzione Automatica ("Traduci in inglese")</strong>
+              <p>La traduzione usa un modello dedicato <code>ggml-medium</code> (≈1,4 GB), scaricato <strong>solo la prima volta</strong> che richiedi la traduzione e poi mantenuto in locale. Il modello di trascrizione large-v3-turbo non è addestrato al task "translate": separare i due modelli garantisce una traduzione inglese reale, fluente e senza cloud.</p>
             </div>
           </div>
         </div>
@@ -439,25 +465,25 @@
               <div class="info-toggle-header">
                 <span class="badge-toggle">Passa-alto (80 Hz)</span>
               </div>
-              <p>Elimina le frequenze ultra-basse: rimuove i rimbombi sordi causati dalle vibrazioni della cattedra, colpi accidentali, passi in aula e il rombo continuo di condizionatori e proiettori.</p>
+              <p>Filtro Butterworth a 80 Hz con pendenza di 12 dB/ottava: elimina le frequenze ultra-basse, i rimbombi della cattedra, i colpi accidentali, i passi in aula e il rombo continuo di condizionatori e proiettori.</p>
             </div>
             <div class="info-card">
               <div class="info-toggle-header">
                 <span class="badge-toggle">Noise Gate (-45 dB)</span>
               </div>
-              <p>Silenzia automaticamente l'audio quando il livello sonoro scende sotto la soglia minima del parlato, cancellando il fruscio continuo dell'ambiente e i respiri durante le pause.</p>
+              <p>Silenzia automaticamente l'audio quando il livello scende sotto la soglia minima del parlato. Usa isteresi (−42 / −50 dB), un tempo di hold di 250 ms e un'attenuazione morbida a −60 dB: elimina fruscii e respiri senza tagliare le code delle parole.</p>
             </div>
             <div class="info-card">
               <div class="info-toggle-header">
                 <span class="badge-toggle">Compressore Dinamico</span>
               </div>
-              <p>Livella l'escursione dinamica: rende perfettamente comprensibili le parole pronunciate a bassa voce ed evita che toni acuti o esclamazioni saturino il microfono.</p>
+              <p>Livella l'escursione dinamica con soglia −28 dB e rapporto 3,5:1, rende comprensibili le parole a bassa voce ed evita che toni acuti o esclamazioni saturino il microfono. Un limiter finale a −2 dB garantisce l'assenza di clipping.</p>
             </div>
             <div class="info-card">
               <div class="info-toggle-header">
                 <span class="badge-toggle">Auto-Gain (AGC)</span>
               </div>
-              <p>Regola automaticamente il guadagno medio: se il docente si sposta nell'aula o parla a distanza variabile dal microfono, il volume vocale rimane sempre uniforme.</p>
+              <p>Regola il guadagno in tempo reale verso un livello vocale costante (−20 dBFS): se il docente si sposta nell'aula o parla a distanza variabile dal microfono, il volume resta uniforme. Non amplifica il silenzio e interviene con attacco rapido e rilascio graduale.</p>
             </div>
           </div>
         </div>
@@ -475,7 +501,7 @@
             </div>
             <div class="info-card">
               <strong>Modello GGML Large-v3 Turbo (1.5 GB)</strong>
-              <p>809 milioni di parametri con 4 decoder layers: conserva l'eccellente precisione lessicale per terminologie universitarie complesse con velocità moltiplicata rispetto al modello standard.</p>
+              <p>809 milioni di parametri con 4 decoder layers: conserva l'eccellente precisione lessicale per terminologie universitarie complesse con velocità moltiplicata rispetto al modello standard. Viene scaricato <strong>solo alla prima trascrizione richiesta</strong> e resta poi disponibile offline.</p>
             </div>
             <div class="info-card">
               <strong>100% Privacy & Offline</strong>

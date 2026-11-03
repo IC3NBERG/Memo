@@ -98,15 +98,32 @@ const state = {
   gainNode: null,
   analyserNode: null,
   compressorNode: null,
+  compressorMakeupNode: null,
   highpassNode: null,
   noiseGateNode: null,
   noiseGateAnalyser: null,
   noiseGateInterval: null,
+  agcNode: null,
+  agcAnalyser: null,
+  agcInterval: null,
+  limiterNode: null,
+  gateOpen: true,
   streamSource: null,
   micStream: null,
   modelReady: false,
+  modelDownloading: false,
+  modelDownloadWaiters: [],
   showTimestamps: false,
   playerAudio: document.getElementById('hidden-audio'),
+
+  // Trascrizione / traduzione
+  transcribing: false,
+  transcriptionStarting: false,
+  transcribeRecDir: null,
+  translationModelReady: false,
+  translationModelDownloading: false,
+  translationDownloadWaiters: [],
+  liveTranslationWarned: false,
 
   // Trascrizione Live istantanea (chunk PCM reali, non tutto l'audio accumulato)
   liveTranscriptionEnabled: false,
@@ -129,7 +146,9 @@ const UI = {
   brandIconSlot:       $('brand-icon-slot'),
 
   // Banners
+  bannerStack:         $('banner-stack'),
   modelBanner:         $('model-banner'),
+  modelBannerTitle:    $('model-banner-title'),
   modelIconSlot:       $('model-icon-slot'),
   modelProgressFill:   $('model-progress-fill'),
   modelProgressPct:    $('model-progress-pct'),
@@ -159,6 +178,8 @@ const UI = {
   emptyIconSlot:       $('empty-icon-slot'),
   emptyRecIconSlot:    $('empty-rec-icon-slot'),
   btnEmptyNewRec:      $('btn-empty-new-rec'),
+  recordingPill:       $('recording-pill'),
+  recordingPillTimer:  $('recording-pill-timer'),
   recordingView:       $('recording-view'),
   recCenterTimer:      $('rec-center-timer'),
   toggleCenterLive:    $('toggle-center-live'),
@@ -189,6 +210,7 @@ const UI = {
   iconMdSlot:          $('icon-md-slot'),
 
   // Barra controlli trascrizione
+  transcribeBar:       $('transcribe-bar'),
   transcribeButtons:   $('transcribe-buttons'),
   btnTranscribeAfter:  $('btn-transcribe-after'),
   btnTranscribeText:   $('btn-transcribe-text'),
@@ -202,8 +224,12 @@ const UI = {
   transcribeStatusText:   $('transcribe-status-text'),
 
   // Editor trascrizione
+  transcriptArea:      $('transcript-area'),
   transcriptContent:   $('transcript-content'),
   timestampsMargin:    $('timestamps-margin'),
+  transcribeOverlay:   $('transcribe-overlay'),
+  transcribeOverlayTitle: $('transcribe-overlay-title'),
+  transcribeOverlaySub:   $('transcribe-overlay-sub'),
 
   // Bottom Bar (Solo REC e timer)
   btnRec:              $('btn-rec'),
@@ -312,6 +338,112 @@ function injectStaticIcons() {
 }
 
 // ══════════════════════════════════════════════════════════════
+// 1b. GESTIONE VISTE, BANNER E STATO UI
+// ══════════════════════════════════════════════════════════════
+
+// Garantisce che sia visibile UNA SOLA vista centrale: elimina le sovrapposizioni.
+function showMainView(view) {
+  const showEmpty = view === 'empty';
+  const showRecording = view === 'recording';
+  const showTranscript = view === 'transcript';
+
+  UI.emptyState.classList.toggle('hidden', !showEmpty);
+  UI.recordingView?.classList.toggle('hidden', !showRecording);
+  UI.transcriptView.classList.toggle('hidden', !showTranscript);
+
+  updateRecordingPill();
+}
+
+// Pill flottante visibile quando registriamo ma stiamo guardando un'altra nota.
+function updateRecordingPill() {
+  if (!UI.recordingPill) return;
+  const recordingViewHidden = UI.recordingView?.classList.contains('hidden') !== false;
+  const shouldShow = state.recording && recordingViewHidden;
+  UI.recordingPill.classList.toggle('hidden', !shouldShow);
+  UI.recordingPill.classList.toggle('paused', !!state.paused);
+}
+
+// Il banner stack è fisso: misuriamo la sua altezza per non coprire l'app.
+function updateBannerOffset() {
+  const stack = UI.bannerStack;
+  const height = stack ? stack.offsetHeight : 0;
+  document.documentElement.style.setProperty('--banner-offset', `${height}px`);
+}
+
+function setPreprocTogglesEnabled(enabled) {
+  [UI.toggleHighpass, UI.toggleNoisegate, UI.toggleCompressor, UI.toggleAutogain].forEach(input => {
+    if (!input) return;
+    input.disabled = !enabled;
+    const label = input.closest('.preproc-toggle');
+    if (label) {
+      if (!label.dataset.originalTitle) label.dataset.originalTitle = label.title;
+      label.classList.toggle('disabled', !enabled);
+      label.title = enabled
+        ? label.dataset.originalTitle
+        : 'Preprocessing bloccato durante la registrazione: si applica dalla prossima REC';
+    }
+  });
+}
+
+// Confirm modale basata su Promise (riutilizzabile da download e azioni).
+function confirmDialog(title, message, okLabel = 'Conferma', danger = false) {
+  return new Promise((resolve) => {
+    if (!UI.modalConfirm) { resolve(false); return; }
+
+    UI.confirmTitle.textContent = title;
+    UI.confirmMessage.textContent = message;
+    UI.btnConfirmOk.textContent = okLabel;
+    UI.btnConfirmOk.classList.toggle('btn-danger', danger);
+    UI.btnConfirmOk.classList.toggle('btn-primary', !danger);
+    UI.modalConfirm.classList.remove('hidden');
+
+    const finish = (result) => {
+      UI.modalConfirm.classList.add('hidden');
+      UI.btnConfirmOk.onclick = null;
+      UI.btnConfirmCancel.onclick = null;
+      UI.modalConfirm.onclick = null;
+      resolve(result);
+    };
+
+    UI.btnConfirmOk.onclick = () => finish(true);
+    UI.btnConfirmCancel.onclick = () => finish(false);
+    UI.modalConfirm.onclick = (e) => {
+      if (e.target === UI.modalConfirm) finish(false);
+    };
+  });
+}
+
+function setTranscribing(active, mode = 'transcribe') {
+  state.transcribing = active;
+
+  UI.transcribeBar?.classList.toggle('transcribing', active);
+  UI.transcriptArea?.classList.toggle('transcribing', active);
+  UI.transcribeOverlay?.classList.toggle('hidden', !active);
+  UI.btnTranscribeAfter?.classList.toggle('is-loading', active);
+  if (UI.btnTranscribeAfter) UI.btnTranscribeAfter.disabled = active;
+
+  if (active) {
+    if (UI.transcribeOverlayTitle) {
+      UI.transcribeOverlayTitle.textContent = mode === 'translate'
+        ? 'Traduzione in corso…'
+        : 'Trascrizione in corso…';
+    }
+    if (UI.transcribeOverlaySub) {
+      UI.transcribeOverlaySub.textContent = mode === 'translate'
+        ? 'Il modello di traduzione sta elaborando l’audio'
+        : 'Elaborazione con GPU Metal';
+    }
+    if (UI.btnTranscribeText) {
+      UI.btnTranscribeText.textContent = mode === 'translate' ? 'Traduzione…' : 'Trascrizione…';
+    }
+  } else if (UI.btnTranscribeAfter) {
+    UI.btnTranscribeAfter.disabled = false;
+    updateTranscriptStatusBadge();
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════
 // 2. AVVIO & SETUP
 // ══════════════════════════════════════════════════════════════
 async function init() {
@@ -325,6 +457,11 @@ async function init() {
   setupWaveform();
   setupKeyboardNavigation();
   setupUpdaterControls();
+  setupModelDownloadListeners();
+  setupTranslationModelListeners();
+
+  window.addEventListener('resize', updateBannerOffset);
+  updateBannerOffset();
 
   // Versione app
   if (API?.getVersion) {
@@ -337,12 +474,14 @@ async function init() {
   // Carica libreria
   await refreshLibrary();
 
-  // Controllo modello Whisper
-  const modelOk = await API.modelCheck();
-  if (modelOk) {
-    state.modelReady = true;
-  } else {
-    startModelDownload();
+  // Controllo modelli: nessun download automatico. I modelli restano dormienti
+  // e vengono scaricati solo quando l'utente richiede trascrizione o traduzione.
+  state.modelReady = await API.modelCheck();
+
+  try {
+    state.translationModelReady = await API.modelCheckTranslation();
+  } catch (_) {
+    state.translationModelReady = false;
   }
 }
 
@@ -369,9 +508,8 @@ function closeActiveRecording() {
   state.activeRec = null;
   state.transcript = null;
 
-  // Mostra schermata vuota / home
-  UI.transcriptView.classList.add('hidden');
-  UI.emptyState.classList.remove('hidden');
+  // Se una registrazione è in corso torniamo alla vista REC, mai alla home.
+  showMainView(state.recording ? 'recording' : 'empty');
 
   showToast('Nota chiusa', 'info', 1500);
 }
@@ -385,13 +523,18 @@ function setupKeyboardNavigation() {
         if (openModal === UI.modalSaveName) {
           // Non chiudere silenziosamente: chiedi conferma prima di scartare
           UI.btnSaveCancel?.click();
+        } else if (openModal === UI.modalConfirm) {
+          UI.btnConfirmCancel?.click();
         } else {
           openModal.classList.add('hidden');
         }
+        updateBannerOffset();
         return;
       }
-      if (state.activeRec && !state.recording) {
+      if (state.activeRec) {
         closeActiveRecording();
+      } else if (state.recording) {
+        showMainView('recording');
       }
     }
   });
@@ -421,9 +564,18 @@ function setupSearchControls() {
 // 4. REGISTRAZIONE & AUDIO PIPELINE
 // ══════════════════════════════════════════════════════════════
 function setupRecControls() {
-  // Barra inferiore: solo REC (avvia registrazione)
+  // Barra inferiore: REC avvia, oppure riporta alla registrazione in corso.
   UI.btnRec.addEventListener('click', () => {
-    if (!state.recording) startRecording();
+    if (state.recording) {
+      showMainView('recording');
+      return;
+    }
+    startRecording();
+  });
+
+  // Pill flottante: torna alla registrazione mentre navighi le note.
+  UI.recordingPill?.addEventListener('click', () => {
+    if (state.recording) showMainView('recording');
   });
 
   // Controlli centrali durante la registrazione attiva (Pausa e Termina)
@@ -439,7 +591,19 @@ function setupRecControls() {
   });
 
   // Toggle Live al centro
-  UI.toggleCenterLive?.addEventListener('change', () => {
+  UI.toggleCenterLive?.addEventListener('change', async () => {
+    if (UI.toggleCenterLive.checked && !state.modelReady) {
+      const ready = await ensureTranscriptionModel();
+      if (!ready) {
+        UI.toggleCenterLive.checked = false;
+        state.liveTranscriptionEnabled = false;
+        UI.liveTextContainer?.classList.add('hidden');
+        UI.liveOffHint?.classList.remove('hidden');
+        showToast('Trascrizione Live non attivata: modello non scaricato.', 'info', 3000);
+        return;
+      }
+    }
+
     state.liveTranscriptionEnabled = UI.toggleCenterLive.checked;
     if (state.liveTranscriptionEnabled) {
       UI.liveTextContainer?.classList.remove('hidden');
@@ -460,19 +624,43 @@ function setupRecControls() {
 }
 
 async function startRecording() {
+  if (state.recording) {
+    showMainView('recording');
+    return;
+  }
+
+  // Se c'è una nota aperta la salviamo e la chiudiamo: la nuova registrazione
+  // non deve mai scrivere dentro la nota che stavi leggendo.
+  if (state.activeRec) {
+    try { await saveTranscript(); } catch (_) {}
+    state.activeRec = null;
+    state.transcript = null;
+    document.querySelectorAll('.rec-item').forEach(el => el.classList.remove('active'));
+  }
+
+  if (state.playerAudio && !state.playerAudio.paused) {
+    state.playerAudio.pause();
+    state.playerAudio.currentTime = 0;
+  }
+  showPlayerOrWaveform('waveform');
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
-        sampleRate: 16000,
-        channelCount: 1,
+        channelCount: { ideal: 1 },
       },
     });
 
     state.micStream = stream;
-    state.audioContext = new AudioContext({ sampleRate: 16000 });
+    try {
+      state.audioContext = new AudioContext({ sampleRate: 16000 });
+    } catch (_) {
+      // Fallback: alcuni device non accettano un sample rate forzato.
+      state.audioContext = new AudioContext();
+    }
     const source = state.audioContext.createMediaStreamSource(stream);
     state.streamSource = source;
 
@@ -511,14 +699,14 @@ async function startRecording() {
     state.liveTextTranslated = false;
     state.liveTranscribing = false;
 
-    // Mostra la vista centrale di registrazione
-    UI.emptyState.classList.add('hidden');
-    UI.transcriptView.classList.add('hidden');
-    UI.recordingView?.classList.remove('hidden');
+    // Mostra la vista centrale di registrazione (una sola vista alla volta)
+    showMainView('recording');
+    setPreprocTogglesEnabled(false);
 
     UI.btnRec.classList.add('recording');
     if (UI.recCenterTimer) UI.recCenterTimer.textContent = '00:00:00';
     if (UI.recTimer) UI.recTimer.textContent = '00:00:00';
+    if (UI.recordingPillTimer) UI.recordingPillTimer.textContent = '00:00:00';
     if (UI.centerPauseText) UI.centerPauseText.textContent = 'Pausa';
     if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.pause;
 
@@ -545,6 +733,7 @@ async function startRecording() {
   } catch (err) {
     cleanupLiveAudioCapture();
     cleanupAudioPipeline();
+    setPreprocTogglesEnabled(true);
     if (state.micStream) {
       state.micStream.getTracks().forEach(t => t.stop());
       state.micStream = null;
@@ -553,6 +742,7 @@ async function startRecording() {
       try { state.audioContext.close(); } catch (_) {}
       state.audioContext = null;
     }
+    showMainView('empty');
     showToast('Errore microfono: ' + err.message, 'error', 4000);
   }
 }
@@ -561,21 +751,35 @@ function buildAudioPipeline(sourceNode) {
   const ctx = state.audioContext;
   let node = sourceNode;
 
-  // 1. Filtro passa-alto (80Hz)
+  // Reset riferimenti (evita nodi stantii tra una REC e l'altra)
+  state.highpassNode = null;
+  state.compressorNode = null;
+  state.compressorMakeupNode = null;
+  state.noiseGateNode = null;
+  state.noiseGateAnalyser = null;
+  state.noiseGateInterval = null;
+  state.agcNode = null;
+  state.agcAnalyser = null;
+  state.agcInterval = null;
+  state.limiterNode = null;
+  state.gateOpen = true;
+
+  // 1. Filtro passa-alto (80 Hz, Butterworth Q=0.707)
   if (UI.toggleHighpass.checked) {
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
     hp.frequency.value = 80;
-    hp.Q.value = 0.7;
+    hp.Q.value = 0.707;
     node.connect(hp);
     node = hp;
     state.highpassNode = hp;
   }
 
-  // 2. Noise gate (-45 dB) con isteresi e rilascio graduale
+  // 2. Noise gate (-45 dB) con isteresi, hold e attenuazione morbida
   if (UI.toggleNoisegate.checked) {
     const gateAnalyser = ctx.createAnalyser();
-    gateAnalyser.fftSize = 512;
+    gateAnalyser.fftSize = 1024;
+    gateAnalyser.smoothingTimeConstant = 0.2;
     const gateGain = ctx.createGain();
     gateGain.gain.value = 1;
 
@@ -584,19 +788,36 @@ function buildAudioPipeline(sourceNode) {
     gateAnalyser.connect(gateGain);
 
     const timeData = new Float32Array(gateAnalyser.fftSize);
-    const threshold = Math.pow(10, -45 / 20);
+    const OPEN_THRESHOLD = Math.pow(10, -42 / 20);   // isteresi superiore
+    const CLOSE_THRESHOLD = Math.pow(10, -50 / 20);  // isteresi inferiore
+    const FLOOR_GAIN = Math.pow(10, -60 / 20);       // −60 dB, non zero
+    const HOLD_MS = 250;
+    let lastSpeechAt = performance.now();
+    let gateOpen = true;
+
     const gateInterval = setInterval(() => {
+      if (state.paused) return;
+
       gateAnalyser.getFloatTimeDomainData(timeData);
       let sum = 0;
       for (let i = 0; i < timeData.length; i++) sum += timeData[i] * timeData[i];
       const rms = Math.sqrt(sum / timeData.length);
-      const now = ctx.currentTime;
+      const nowMs = performance.now();
+
+      if (rms >= OPEN_THRESHOLD) {
+        gateOpen = true;
+        lastSpeechAt = nowMs;
+      } else if (gateOpen && rms <= CLOSE_THRESHOLD && nowMs - lastSpeechAt > HOLD_MS) {
+        gateOpen = false;
+      }
+
+      state.gateOpen = gateOpen;
       gateGain.gain.setTargetAtTime(
-        rms >= threshold ? 1 : 0,
-        now,
-        rms >= threshold ? 0.02 : 0.12
+        gateOpen ? 1 : FLOOR_GAIN,
+        ctx.currentTime,
+        gateOpen ? 0.005 : 0.12
       );
-    }, 50);
+    }, 20);
 
     state.noiseGateNode = gateGain;
     state.noiseGateAnalyser = gateAnalyser;
@@ -604,27 +825,77 @@ function buildAudioPipeline(sourceNode) {
     node = gateGain;
   }
 
-  // 3. Compressore dinamico
+  // 3. Compressore dinamico + makeup gain
   if (UI.toggleCompressor.checked) {
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -48;
-    comp.knee.value = 10;
-    comp.ratio.value = 6;
-    comp.attack.value = 0.003;
-    comp.release.value = 0.15;
+    comp.threshold.value = -28;
+    comp.knee.value = 18;
+    comp.ratio.value = 3.5;
+    comp.attack.value = 0.006;
+    comp.release.value = 0.22;
     node.connect(comp);
-    node = comp;
+
+    const makeup = ctx.createGain();
+    makeup.gain.value = 1.4; // ≈ +3 dB
+    comp.connect(makeup);
+
+    node = makeup;
     state.compressorNode = comp;
+    state.compressorMakeupNode = makeup;
   }
 
-  // 4. Auto-gain adattivo
+  // 4. Auto-Gain reale (AGC): misura l'RMS e regola il guadagno nel tempo
   if (UI.toggleAutogain.checked) {
-    const gain = ctx.createGain();
-    gain.gain.value = 2.4;
-    node.connect(gain);
-    node = gain;
-    state.gainNode = gain;
+    const agcAnalyser = ctx.createAnalyser();
+    agcAnalyser.fftSize = 2048;
+    agcAnalyser.smoothingTimeConstant = 0.3;
+    const agcGain = ctx.createGain();
+    agcGain.gain.value = 1;
+
+    node.connect(agcAnalyser);
+    agcAnalyser.connect(agcGain);
+
+    const timeData = new Float32Array(agcAnalyser.fftSize);
+    const TARGET_RMS = Math.pow(10, -20 / 20); // −20 dBFS
+    const MIN_GAIN = 0.5;
+    const MAX_GAIN = 8;
+    let currentGain = 1;
+
+    const agcInterval = setInterval(() => {
+      if (state.paused || !state.gateOpen) return;
+
+      agcAnalyser.getFloatTimeDomainData(timeData);
+      let sum = 0;
+      for (let i = 0; i < timeData.length; i++) sum += timeData[i] * timeData[i];
+      const rms = Math.sqrt(sum / timeData.length);
+
+      // Non amplificare il silenzio o il solo rumore di fondo.
+      if (rms < Math.pow(10, -45 / 20)) return;
+
+      const desired = Math.min(MAX_GAIN, Math.max(MIN_GAIN, TARGET_RMS / Math.max(rms, 1e-4)));
+      // Riduzione rapida per evitare picchi, aumento lento per non pompare.
+      const factor = desired < currentGain ? 0.35 : 0.12;
+      currentGain = currentGain + (desired - currentGain) * factor;
+      currentGain = Math.min(MAX_GAIN, Math.max(MIN_GAIN, currentGain));
+      agcGain.gain.setTargetAtTime(currentGain, ctx.currentTime, 0.15);
+    }, 100);
+
+    state.agcNode = agcGain;
+    state.agcAnalyser = agcAnalyser;
+    state.agcInterval = agcInterval;
+    node = agcGain;
   }
+
+  // 5. Limiter finale: garantisce che il segnale non saturi mai
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -2;
+  limiter.knee.value = 0;
+  limiter.ratio.value = 20;
+  limiter.attack.value = 0.001;
+  limiter.release.value = 0.06;
+  node.connect(limiter);
+  node = limiter;
+  state.limiterNode = limiter;
 
   return node;
 }
@@ -634,14 +905,36 @@ function cleanupAudioPipeline() {
     clearInterval(state.noiseGateInterval);
     state.noiseGateInterval = null;
   }
-  if (state.noiseGateAnalyser) {
-    try { state.noiseGateAnalyser.disconnect(); } catch (_) {}
-    state.noiseGateAnalyser = null;
+  if (state.agcInterval) {
+    clearInterval(state.agcInterval);
+    state.agcInterval = null;
   }
-  if (state.noiseGateNode) {
-    try { state.noiseGateNode.disconnect(); } catch (_) {}
-    state.noiseGateNode = null;
-  }
+
+  const nodes = [
+    state.noiseGateAnalyser,
+    state.noiseGateNode,
+    state.compressorNode,
+    state.compressorMakeupNode,
+    state.agcAnalyser,
+    state.agcNode,
+    state.limiterNode,
+    state.highpassNode,
+  ];
+
+  nodes.forEach(node => {
+    if (!node) return;
+    try { node.disconnect(); } catch (_) {}
+  });
+
+  state.noiseGateAnalyser = null;
+  state.noiseGateNode = null;
+  state.compressorNode = null;
+  state.compressorMakeupNode = null;
+  state.agcAnalyser = null;
+  state.agcNode = null;
+  state.limiterNode = null;
+  state.highpassNode = null;
+  state.gateOpen = true;
 }
 
 // Cattura PCM in tempo reale per la trascrizione live: ogni intervallo
@@ -691,6 +984,7 @@ function pauseRecording() {
     state.liveChunkInterval = null;
     state.liveSampleBuffer = [];
     UI.btnRec.classList.remove('recording');
+    updateRecordingPill();
 
     if (UI.centerPauseText) UI.centerPauseText.textContent = 'Riprendi';
     if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.play;
@@ -708,6 +1002,7 @@ function resumeRecording() {
       startLiveTranscriptionLoop();
     }
     UI.btnRec.classList.add('recording');
+    updateRecordingPill();
 
     if (UI.centerPauseText) UI.centerPauseText.textContent = 'Pausa';
     if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.pause;
@@ -723,33 +1018,39 @@ function stopRecording() {
     state.liveChunkInterval = null;
     state.recording = false;
     state.paused = false;
+    state.gateOpen = true;
 
     UI.btnRec.classList.remove('recording');
     if (UI.centerPauseText) UI.centerPauseText.textContent = 'Pausa';
     if (UI.centerPauseIconSlot) UI.centerPauseIconSlot.innerHTML = ICONS.pause;
 
-    UI.recordingView?.classList.add('hidden');
+    setPreprocTogglesEnabled(true);
+    showMainView(state.activeRec ? 'transcript' : 'empty');
+
+    // Il cleanup avviene DOPO onstop: altrimenti l'ultimo chunk audio
+    // prodotto da MediaRecorder andrebbe perso.
+    const finalize = async () => {
+      cleanupLiveAudioCapture();
+      cleanupAudioPipeline();
+
+      if (state.micStream) {
+        state.micStream.getTracks().forEach(t => t.stop());
+        state.micStream = null;
+      }
+      if (state.audioContext) {
+        try { await state.audioContext.close(); } catch (_) {}
+        state.audioContext = null;
+      }
+
+      await saveRecording();
+      resolve();
+    };
 
     if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
-      state.mediaRecorder.onstop = async () => {
-        await saveRecording();
-        resolve();
-      };
+      state.mediaRecorder.onstop = finalize;
       state.mediaRecorder.stop();
     } else {
-      resolve();
-    }
-
-    // Cleanup cattura live e audio context
-    cleanupLiveAudioCapture();
-    cleanupAudioPipeline();
-    if (state.micStream) {
-      state.micStream.getTracks().forEach(t => t.stop());
-      state.micStream = null;
-    }
-    if (state.audioContext) {
-      state.audioContext.close();
-      state.audioContext = null;
+      finalize();
     }
   });
 }
@@ -757,7 +1058,7 @@ function stopRecording() {
 async function saveRecording() {
   if (state.audioChunks.length === 0) {
     showToast('Nessun audio registrato', 'error', 3000);
-    UI.emptyState.classList.remove('hidden');
+    showMainView(state.activeRec ? 'transcript' : 'empty');
     return;
   }
 
@@ -844,14 +1145,12 @@ function showSaveNameModal(wavBuffer) {
 
   const restoreMainView = () => {
     if (state.activeRec) {
-      UI.emptyState.classList.add('hidden');
-      UI.transcriptView.classList.remove('hidden');
+      showMainView('transcript');
       if (state.playerAudio?.getAttribute('src')) {
         showPlayerOrWaveform('player');
       }
     } else {
-      UI.transcriptView.classList.add('hidden');
-      UI.emptyState.classList.remove('hidden');
+      showMainView(state.recording ? 'recording' : 'empty');
     }
   };
 
@@ -954,6 +1253,7 @@ function startTimer() {
     const timeStr = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
     if (UI.recTimer) UI.recTimer.textContent = timeStr;
     if (UI.recCenterTimer) UI.recCenterTimer.textContent = timeStr;
+    if (UI.recordingPillTimer) UI.recordingPillTimer.textContent = timeStr;
   }, 1000);
 }
 
@@ -1033,10 +1333,6 @@ function setupTranscriptControls() {
   // Trascrizione / Traduzione nota attiva
   UI.btnTranscribeAfter?.addEventListener('click', () => {
     if (!state.activeRec) return;
-    if (!state.modelReady) {
-      showToast('Attendere: modello Whisper in caricamento...', 'info', 3000);
-      return;
-    }
     const mode = UI.selectTranscribeMode?.value || 'transcribe'; // 'transcribe' | 'translate'
     startTranscription(state.activeRec, mode === 'translate');
   });
@@ -1064,6 +1360,7 @@ function setupTranscriptControls() {
 
   // Registrazione dei listener IPC UNA SOLA VOLTA all'avvio dell'app
   API.onTranscriptionProgress((pct) => {
+    UI.transcribeProgress?.classList.remove('indeterminate');
     if (UI.transcribeProgressFill) UI.transcribeProgressFill.style.width = pct + '%';
     if (UI.transcribeProgressPct) UI.transcribeProgressPct.textContent = pct + '%';
   });
@@ -1077,10 +1374,14 @@ function setupTranscriptControls() {
 
     UI.transcribeProgress?.classList.add('hidden');
     UI.transcribeButtons?.classList.remove('hidden');
+    UI.transcribeProgress?.classList.remove('indeterminate');
 
     const isTranslate = typeof payload?.translate === 'boolean'
       ? payload.translate
       : state.transcriptionTranslate;
+
+    setTranscribing(false);
+    state.transcribeRecDir = null;
 
     if (isForActive) {
       state.transcript = transcript;
@@ -1094,13 +1395,26 @@ function setupTranscriptControls() {
     }
 
     refreshLibrary();
-    showToast(isTranslate ? 'Traduzione in Inglese completata al 100%!' : 'Trascrizione integrale completata al 100%!', 'success', 3000);
+    showToast(isTranslate ? 'Traduzione in inglese completata al 100%!' : 'Trascrizione integrale completata al 100%!', 'success', 3000);
   });
 
   API.onTranscriptionError((err) => {
     UI.transcribeProgress?.classList.add('hidden');
     UI.transcribeButtons?.classList.remove('hidden');
-    showToast('Errore trascrizione: ' + err, 'error', 5000);
+    UI.transcribeProgress?.classList.remove('indeterminate');
+    setTranscribing(false);
+    state.transcribeRecDir = null;
+
+    const message = typeof err === 'string' ? err : (err?.message || 'Errore sconosciuto');
+    const code = typeof err === 'object' ? err?.code : null;
+
+    if (code === 'translation-model-missing') {
+      state.translationModelReady = false;
+      showToast('Modello di traduzione non disponibile: avvia di nuovo la traduzione per scaricarlo.', 'info', 5000);
+      return;
+    }
+
+    showToast('Errore trascrizione: ' + message, 'error', 5000);
   });
 }
 
@@ -1121,7 +1435,13 @@ function startLiveTranscriptionLoop() {
     const rms = Math.sqrt(energy / samples.length);
     if (rms < Math.pow(10, -50 / 20)) return;
 
-    const isTranslate = UI.selectTranscribeMode?.value === 'translate';
+    const wantsTranslate = UI.selectTranscribeMode?.value === 'translate';
+    const isTranslate = wantsTranslate && state.translationModelReady;
+    let translatedThisChunk = isTranslate;
+    if (wantsTranslate && !state.translationModelReady && !state.liveTranslationWarned) {
+      state.liveTranslationWarned = true;
+      showToast('Traduzione live non disponibile: il modello di traduzione non è ancora scaricato. Registro in lingua originale.', 'info', 5000);
+    }
     const sampleRate = state.liveSampleRate || 16000;
 
     state.liveTranscribing = true;
@@ -1129,11 +1449,27 @@ function startLiveTranscriptionLoop() {
       const wavBuffer = encodeWav(samples, sampleRate);
 
       // Inviamo solo i campioni nuovi: costo costante per ogni intervallo
-      const res = await API.transcriptionChunk({
+      let res = await API.transcriptionChunk({
         buffer: wavBuffer,
         language: 'auto',
         translate: isTranslate,
       });
+
+      // Se il modello di traduzione non c'è, ripieghiamo sulla trascrizione
+      // originale invece di perdere il chunk.
+      if (!res.success && res.code === 'translation-model-missing') {
+        state.translationModelReady = false;
+        translatedThisChunk = false;
+        res = await API.transcriptionChunk({
+          buffer: wavBuffer,
+          language: 'auto',
+          translate: false,
+        });
+        if (!state.liveTranslationWarned) {
+          state.liveTranslationWarned = true;
+          showToast('Modello di traduzione assente: anteprima live in lingua originale.', 'info', 5000);
+        }
+      }
 
       // Se la registrazione è terminata nel frattempo, non sporcare la nota
       if (!state.recording) return;
@@ -1144,17 +1480,14 @@ function startLiveTranscriptionLoop() {
           state.liveTextAccumulated = state.liveTextAccumulated
             ? `${state.liveTextAccumulated} ${text}`
             : text;
-          state.liveTextTranslated = isTranslate;
+          state.liveTextTranslated = translatedThisChunk;
 
-          // Aggiorna anteprima live al centro della schermata di registrazione
+          // Aggiorna SOLO l'anteprima live della vista registrazione.
+          // Mai il testo di una nota aperta in parallelo.
           if (UI.liveStreamText) {
             UI.liveStreamText.textContent = state.liveTextAccumulated;
             UI.liveStreamText.scrollTop = UI.liveStreamText.scrollHeight;
-          }
-
-          // Se la vista trascrizione è aperta, aggiorna subito il testo a video
-          if (UI.transcriptContent && (state.activeRec || !UI.transcriptView.classList.contains('hidden'))) {
-            UI.transcriptContent.textContent = state.liveTextAccumulated;
+            UI.liveStreamText.classList.add('live-typing');
           }
         }
       }
@@ -1187,37 +1520,77 @@ function takeLiveSamples() {
   return merged;
 }
 
-function startTranscription(rec, isTranslate = false) {
+async function startTranscription(rec, isTranslate = false) {
   if (!rec || !rec.recDir) return;
-
-  state.transcriptionTranslate = isTranslate;
-
-  UI.transcribeButtons?.classList.add('hidden');
-  UI.transcribeProgress?.classList.remove('hidden');
-  if (UI.transcribeProgressFill) UI.transcribeProgressFill.style.width = '0%';
-  if (UI.transcribeProgressPct) UI.transcribeProgressPct.textContent = '0%';
-  if (UI.transcribeStatusText) {
-    UI.transcribeStatusText.textContent = isTranslate
-      ? 'Traduzione in corso con GPU Metal…'
-      : 'Decodifica integrale 100% con GPU Metal…';
+  if (state.transcribing || state.transcriptionStarting) {
+    if (state.transcribing) showToast('Una trascrizione è già in corso. Attendi che termini.', 'info', 3000);
+    return;
   }
 
-  API.transcriptionStart({
-    audioPath: rec.audioPath,
-    recDir: rec.recDir,
-    language: 'auto',
-    translate: isTranslate,
-  });
+  state.transcriptionStarting = true;
+
+  try {
+    // La traduzione richiede il modello dedicato: lo scarichiamo SOLO ora,
+    // quando l'utente la richiede esplicitamente (modello dormiente).
+    if (isTranslate) {
+      const ready = await ensureTranslationModel();
+      if (!ready) {
+        showToast('Traduzione annullata: serve il modello di traduzione.', 'info', 3500);
+        return;
+      }
+    } else {
+      const ready = await ensureTranscriptionModel();
+      if (!ready) {
+        showToast('Trascrizione annullata: serve il modello di trascrizione.', 'info', 3500);
+        return;
+      }
+    }
+
+    // Se durante l'attesa del download l'utente ha chiuso o cambiato nota,
+    // non avviare l'elaborazione sulla nota sbagliata.
+    if (!state.activeRec || state.activeRec.recDir !== rec.recDir) return;
+
+    state.transcriptionTranslate = isTranslate;
+    state.transcribeRecDir = rec.recDir;
+
+    setTranscribing(true, isTranslate ? 'translate' : 'transcribe');
+
+    UI.transcribeButtons?.classList.add('hidden');
+    UI.transcribeProgress?.classList.remove('hidden');
+    UI.transcribeProgress?.classList.remove('indeterminate');
+    if (UI.transcribeProgressFill) UI.transcribeProgressFill.style.width = '0%';
+    if (UI.transcribeProgressPct) UI.transcribeProgressPct.textContent = '0%';
+    if (UI.transcribeStatusText) {
+      UI.transcribeStatusText.textContent = isTranslate
+        ? 'Traduzione in corso con GPU Metal…'
+        : 'Decodifica integrale 100% con GPU Metal…';
+    }
+
+    API.transcriptionStart({
+      audioPath: rec.audioPath,
+      recDir: rec.recDir,
+      language: 'auto',
+      translate: isTranslate,
+    });
+  } finally {
+    state.transcriptionStarting = false;
+  }
 }
 
 function updateTranscriptStatusBadge() {
   if (!UI.transcriptStatusBadge) return;
   const rec = state.activeRec;
+
+  // Durante l'elaborazione il testo del pulsante è gestito da setTranscribing.
+  if (!state.transcribing) {
+    UI.btnTranscribeAfter?.classList.remove('is-loading');
+  }
+
   if (!rec || !rec.hasTranscript) {
     UI.transcriptStatusBadge.className = 'transcript-status-badge hidden';
     UI.transcriptStatusBadge.innerHTML = '';
-    if (UI.btnTranscribeText) UI.btnTranscribeText.textContent = 'Trascrivi';
-    UI.btnTranscribeAfter?.classList.add('highlight');
+    if (!state.transcribing && UI.btnTranscribeText) UI.btnTranscribeText.textContent = 'Trascrivi';
+    if (!state.transcribing) UI.btnTranscribeAfter?.classList.add('highlight');
     return;
   }
 
@@ -1231,14 +1604,18 @@ function updateTranscriptStatusBadge() {
       UI.transcriptStatusBadge.className = 'transcript-status-badge verified';
       UI.transcriptStatusBadge.innerHTML = `<span class="memo-icon icon-xs">${ICONS.check || ''}</span><span>Trascrizione Completa 100% (Verificata)</span>`;
     }
-    if (UI.btnTranscribeText) UI.btnTranscribeText.textContent = 'Ritrascrivi';
-    UI.btnTranscribeAfter?.classList.remove('highlight');
+    if (!state.transcribing) {
+      if (UI.btnTranscribeText) UI.btnTranscribeText.textContent = 'Ritrascrivi';
+      UI.btnTranscribeAfter?.classList.remove('highlight');
+    }
   } else {
     // È un'anteprima Live parziale o non ancora verificata al 100%
     UI.transcriptStatusBadge.className = 'transcript-status-badge preview';
     UI.transcriptStatusBadge.innerHTML = `<span class="memo-icon icon-xs">${ICONS.sparkles || ''}</span><span>Anteprima Live (Parziale)</span>`;
-    if (UI.btnTranscribeText) UI.btnTranscribeText.textContent = 'Perfeziona Completa (100%)';
-    UI.btnTranscribeAfter?.classList.add('highlight');
+    if (!state.transcribing) {
+      if (UI.btnTranscribeText) UI.btnTranscribeText.textContent = 'Perfeziona Completa (100%)';
+      UI.btnTranscribeAfter?.classList.add('highlight');
+    }
   }
 }
 
@@ -1305,6 +1682,28 @@ function renderLibrary() {
   const { folders, unsorted } = state.library;
   const query = state.searchQuery;
 
+  // Libreria completamente vuota: invito a creare la prima nota.
+  if (!query && folders.length === 0 && (unsorted || []).length === 0) {
+    const emptyMsg = document.createElement('div');
+    emptyMsg.className = 'library-empty';
+
+    const icon = document.createElement('span');
+    icon.className = 'library-empty-icon';
+    icon.innerHTML = ICONS.audioWave;
+
+    const title = document.createElement('strong');
+    title.textContent = 'Ancora nessuna nota';
+
+    const hint = document.createElement('span');
+    hint.textContent = 'Premi REC per registrare la tua prima lezione.';
+
+    emptyMsg.appendChild(icon);
+    emptyMsg.appendChild(title);
+    emptyMsg.appendChild(hint);
+    UI.libraryTree.appendChild(emptyMsg);
+    return;
+  }
+
   // Cartelle gruppi
   folders.forEach(folder => {
     const filteredRecordings = filterRecordings(folder.recordings || [], query);
@@ -1318,9 +1717,9 @@ function renderLibrary() {
     }
   });
 
-  // Non categorizzate
+  // Non categorizzate (mostrata solo se contiene registrazioni o se stiamo cercando)
   const filteredUnsorted = filterRecordings(unsorted || [], query);
-  if (!query || filteredUnsorted.length > 0) {
+  if ((!query && (unsorted || []).length > 0) || (query && filteredUnsorted.length > 0)) {
     const unsortedFolder = {
       name: '_unsorted',
       displayName: 'Non categorizzate',
@@ -1331,9 +1730,10 @@ function renderLibrary() {
     UI.libraryTree.appendChild(unsortedEl);
   }
 
-  // Nessun risultato
+  // Nessun risultato per la ricerca
   if (UI.libraryTree.children.length === 0 && query) {
     const emptyMsg = document.createElement('div');
+    emptyMsg.className = 'library-empty';
     emptyMsg.style.padding = '20px 14px';
     emptyMsg.style.color = 'var(--text-muted)';
     emptyMsg.style.fontSize = '12px';
@@ -1377,6 +1777,8 @@ function createFolderElement(folder, autoExpand = false) {
 
   const header = document.createElement('div');
   header.className = 'folder-header';
+  header.setAttribute('role', 'button');
+  header.setAttribute('tabindex', '0');
 
   const chevron = document.createElement('span');
   chevron.className = 'folder-chevron';
@@ -1384,7 +1786,7 @@ function createFolderElement(folder, autoExpand = false) {
 
   const folderIcon = document.createElement('span');
   folderIcon.className = 'folder-icon';
-  folderIcon.innerHTML = isSystem ? ICONS.folder : ICONS.folder;
+  folderIcon.innerHTML = isSystem ? ICONS.inbox : ICONS.folder;
 
   const name = document.createElement('span');
   name.className = 'folder-name';
@@ -1429,15 +1831,28 @@ function createFolderElement(folder, autoExpand = false) {
   });
 
   let isOpen = autoExpand || (recordings.length > 0 && !isSystem);
-  if (isOpen) {
-    wrap.classList.add('open');
-    chevron.classList.add('open');
-  }
 
-  header.addEventListener('click', () => {
-    isOpen = !isOpen;
+  const applyOpenState = () => {
     wrap.classList.toggle('open', isOpen);
     chevron.classList.toggle('open', isOpen);
+    header.setAttribute('aria-expanded', String(isOpen));
+    folderIcon.innerHTML = isOpen
+      ? (isSystem ? ICONS.inbox : ICONS.folderOpen)
+      : (isSystem ? ICONS.inbox : ICONS.folder);
+  };
+  applyOpenState();
+
+  const toggleOpen = () => {
+    isOpen = !isOpen;
+    applyOpenState();
+  };
+
+  header.addEventListener('click', toggleOpen);
+  header.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleOpen();
+    }
   });
 
   wrap.appendChild(header);
@@ -1522,12 +1937,19 @@ function createRecordingElement(rec, folderName) {
 async function openRecording(rec, folderName) {
   state.activeRec = rec;
 
-  // Mostra vista nota e nascondi altre viste
-  UI.emptyState.classList.add('hidden');
-  UI.recordingView?.classList.add('hidden');
-  UI.transcriptView.classList.remove('hidden');
+  // Mostra vista nota e nascondi le altre viste (una sola vista alla volta)
+  showMainView('transcript');
   UI.transcribeProgress?.classList.add('hidden');
   UI.transcribeButtons?.classList.remove('hidden');
+
+  // Se stiamo trascrivendo un'altra nota, resettiamo l'animazione locale.
+  if (!(state.transcribing && state.transcribeRecDir === rec.recDir)) {
+    UI.transcribeBar?.classList.remove('transcribing');
+    UI.transcriptArea?.classList.remove('transcribing');
+    UI.transcribeOverlay?.classList.add('hidden');
+    UI.btnTranscribeAfter?.classList.remove('is-loading');
+    if (UI.btnTranscribeAfter) UI.btnTranscribeAfter.disabled = false;
+  }
 
   // Breadcrumb
   const displayFolder = rec.folder || folderName || 'Non categorizzate';
@@ -1545,6 +1967,10 @@ async function openRecording(rec, folderName) {
   UI.timestampsMargin.innerHTML = '';
 
   const result = await API.transcriptRead({ recDir: rec.recDir });
+
+  // Se nel frattempo l'utente ha aperto un'altra nota, scarta questa risposta.
+  if (!state.activeRec || state.activeRec.recDir !== rec.recDir) return;
+
   if (result.success && result.transcript) {
     state.transcript = result.transcript;
     renderTranscript();
@@ -1555,6 +1981,9 @@ async function openRecording(rec, folderName) {
 
   // Carica audio nel player della barra inferiore
   const audioResult = await API.audioGetPath({ recDir: rec.recDir });
+
+  if (!state.activeRec || state.activeRec.recDir !== rec.recDir) return;
+
   if (audioResult.success) {
     loadAudio(audioResult.audioPath);
   }
@@ -1710,8 +2139,7 @@ function deleteFolder(name) {
           }
           state.activeRec = null;
           state.transcript = null;
-          UI.transcriptView.classList.add('hidden');
-          UI.emptyState.classList.remove('hidden');
+          showMainView(state.recording ? 'recording' : 'empty');
           UI.transcribeProgress?.classList.add('hidden');
           UI.transcribeButtons?.classList.remove('hidden');
           showPlayerOrWaveform('waveform');
@@ -1730,7 +2158,7 @@ function showMoveModal(rec) {
 
   const addOption = (name, label) => {
     const btn = document.createElement('button');
-    btn.className = 'move-folder-opt';
+    btn.className = 'move-folder-item';
     btn.innerHTML = `<span class="memo-icon icon-sm">${ICONS.folder}</span><span>${label}</span>`;
     btn.onclick = async () => {
       UI.modalMove.classList.add('hidden');
@@ -1780,6 +2208,8 @@ function confirmDeleteRecording(rec) {
 function showConfirmModal(title, msg, onConfirm) {
   UI.confirmTitle.textContent = title;
   UI.confirmMessage.textContent = msg;
+  UI.btnConfirmOk.textContent = 'Elimina';
+  UI.btnConfirmOk.className = 'btn-danger';
   UI.modalConfirm.classList.remove('hidden');
   UI.btnConfirmOk.onclick = () => {
     UI.modalConfirm.classList.add('hidden');
@@ -1821,31 +2251,166 @@ function setupResizer() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 11. DOWNLOAD MODELLO WHISPER
+// 11. MODELLI WHISPER (trascrizione + traduzione dormiente)
 // ══════════════════════════════════════════════════════════════
-function startModelDownload() {
-  UI.modelBanner.classList.remove('hidden');
+const MODEL_BANNER_META = {
+  transcription: {
+    title: 'Modello di trascrizione richiesto',
+    desc: 'Scaricamento del modello Large-v3 Turbo (≈1,5 GB)…',
+  },
+  translation: {
+    title: 'Modello di traduzione richiesto',
+    desc: 'Scaricamento del modello Medium (≈1,4 GB)…',
+  },
+};
 
+function showModelBanner(kind = 'transcription') {
+  const meta = MODEL_BANNER_META[kind] || MODEL_BANNER_META.transcription;
+  if (UI.modelBannerTitle) UI.modelBannerTitle.textContent = meta.title;
+  if (UI.modelBannerDesc) UI.modelBannerDesc.textContent = meta.desc;
+  if (UI.modelProgressFill) UI.modelProgressFill.style.width = '0%';
+  if (UI.modelProgressPct) UI.modelProgressPct.textContent = '0%';
+  if (UI.modelIconSlot) UI.modelIconSlot.innerHTML = ICONS.download;
+  UI.modelBanner?.classList.remove('hidden');
+  updateBannerOffset();
+}
+
+function hideModelBanner() {
+  UI.modelBanner?.classList.add('hidden');
+  updateBannerOffset();
+}
+
+function updateModelProgress(kind, data) {
+  if (!data) return;
+  if (UI.modelProgressFill) UI.modelProgressFill.style.width = (data.percent || 0) + '%';
+  if (UI.modelProgressPct) UI.modelProgressPct.textContent = (data.percent || 0) + '%';
+
+  const mb = Math.round((data.downloaded || 0) / (1024 * 1024));
+  const totalMb = Math.round((data.total || 0) / (1024 * 1024));
+  const label = kind === 'translation' ? 'Medium' : 'Large-v3 Turbo';
+  if (UI.modelBannerDesc) {
+    UI.modelBannerDesc.textContent = totalMb > 0
+      ? `Scaricamento modello ${label}: ${mb} MB / ${totalMb} MB…`
+      : `Scaricamento modello ${label}: ${mb} MB…`;
+  }
+}
+
+function resolveTranslationWaiters(ok) {
+  const waiters = state.translationDownloadWaiters.splice(0);
+  waiters.forEach(resolve => {
+    try { resolve(ok); } catch (_) {}
+  });
+}
+
+function resolveModelWaiters(ok) {
+  const waiters = state.modelDownloadWaiters.splice(0);
+  waiters.forEach(resolve => {
+    try { resolve(ok); } catch (_) {}
+  });
+}
+
+// Listener registrati UNA SOLA VOLTA all'avvio: nessun accumulo di handler.
+function setupModelDownloadListeners() {
   API.onModelProgress((data) => {
-    UI.modelProgressFill.style.width = data.percent + '%';
-    UI.modelProgressPct.textContent = data.percent + '%';
-    const mb = Math.round(data.downloaded / (1024 * 1024));
-    const totalMb = Math.round(data.total / (1024 * 1024));
-    UI.modelBannerDesc.textContent = `Scaricamento modello neurale Large-v3 Turbo: ${mb} MB / ${totalMb} MB…`;
+    state.modelDownloading = true;
+    updateModelProgress('transcription', data);
   });
 
   API.onModelDone(() => {
     state.modelReady = true;
-    UI.modelBanner.classList.add('hidden');
-    showToast('Modello Whisper pronto per l\'inferenza Metal!', 'success', 4000);
+    state.modelDownloading = false;
+    hideModelBanner();
+    showToast('Modello di trascrizione pronto per l\'inferenza Metal!', 'success', 4000);
+    resolveModelWaiters(true);
   });
 
   API.onModelError((err) => {
-    UI.modelBannerDesc.textContent = `Errore download: ${err}. Riprova più tardi.`;
-    showToast('Errore nel download del modello Whisper: ' + err, 'error', 6000);
+    state.modelDownloading = false;
+    if (UI.modelBannerDesc) {
+      UI.modelBannerDesc.textContent = `Errore download: ${err}. Riprova più tardi.`;
+    }
+    updateBannerOffset();
+    showToast('Errore nel download del modello: ' + err, 'error', 6000);
+    resolveModelWaiters(false);
+  });
+}
+
+function setupTranslationModelListeners() {
+  API.onTranslationModelProgress((data) => {
+    state.translationModelDownloading = true;
+    updateModelProgress('translation', data);
   });
 
+  API.onTranslationModelDone(() => {
+    state.translationModelReady = true;
+    state.translationModelDownloading = false;
+    hideModelBanner();
+    showToast('Modello di traduzione pronto: la traduzione in inglese è ora disponibile.', 'success', 4000);
+    resolveTranslationWaiters(true);
+  });
+
+  API.onTranslationModelError((err) => {
+    state.translationModelDownloading = false;
+    if (UI.modelBannerDesc) {
+      UI.modelBannerDesc.textContent = `Errore download traduzione: ${err}.`;
+    }
+    updateBannerOffset();
+    showToast('Errore nel download del modello di traduzione: ' + err, 'error', 6000);
+    resolveTranslationWaiters(false);
+  });
+}
+
+function startModelDownload() {
+  showModelBanner('transcription');
+  state.modelDownloading = true;
   API.modelDownload();
+}
+
+// Scarica il modello di trascrizione SOLO quando serve davvero.
+async function ensureTranscriptionModel() {
+  if (state.modelReady) return true;
+
+  if (state.modelDownloading) {
+    return new Promise((resolve) => state.modelDownloadWaiters.push(resolve));
+  }
+
+  const ok = await confirmDialog(
+    'Scaricare il modello di trascrizione?',
+    'La trascrizione richiede il modello Large-v3 Turbo (≈1,5 GB). Verrà scaricato una sola volta e resterà disponibile offline. La registrazione audio funziona comunque anche senza modello.',
+    'Scarica (1,5 GB)'
+  );
+  if (!ok) return false;
+
+  const done = new Promise((resolve) => state.modelDownloadWaiters.push(resolve));
+  startModelDownload();
+  return done;
+}
+
+function downloadTranslationModel() {
+  showModelBanner('translation');
+  state.translationModelDownloading = true;
+  API.modelDownloadTranslation();
+}
+
+// Scarica il modello di traduzione SOLO quando l'utente lo richiede davvero.
+async function ensureTranslationModel() {
+  if (state.translationModelReady) return true;
+
+  // Download già in corso: attendiamo il suo esito senza duplicarlo.
+  if (state.translationModelDownloading) {
+    return new Promise((resolve) => state.translationDownloadWaiters.push(resolve));
+  }
+
+  const ok = await confirmDialog(
+    'Scaricare il modello di traduzione?',
+    'La traduzione in inglese richiede un modello dedicato (ggml-medium, ≈1,4 GB). Verrà scaricato una sola volta e resterà disponibile offline. Il modello di trascrizione non è in grado di tradurre.',
+    'Scarica (1,4 GB)'
+  );
+  if (!ok) return false;
+
+  const done = new Promise((resolve) => state.translationDownloadWaiters.push(resolve));
+  downloadTranslationModel();
+  return done;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1870,6 +2435,7 @@ function setupUpdaterControls() {
 
   UI.btnUpdateDismiss?.addEventListener('click', () => {
     UI.updateBanner?.classList.add('hidden');
+    updateBannerOffset();
   });
 
   UI.btnUpdateAction?.addEventListener('click', async () => {
@@ -1893,11 +2459,13 @@ function setupUpdaterControls() {
       UI.updateBanner?.classList.remove('hidden');
       if (UI.updateBannerText) UI.updateBannerText.textContent = info.message;
       if (UI.btnUpdateAction) UI.btnUpdateAction.classList.add('hidden');
+      updateBannerOffset();
       showToast(info.message, 'info', 4000);
     } else if (info.type === 'downloaded') {
       UI.updateBanner?.classList.remove('hidden');
       if (UI.updateBannerText) UI.updateBannerText.textContent = info.message;
       if (UI.btnUpdateAction) UI.btnUpdateAction.classList.remove('hidden');
+      updateBannerOffset();
       showToast('Aggiornamento pronto! Clicca "Riavvia e Aggiorna"', 'success', 6000);
     } else if (info.type === 'not-available') {
       showToast('Crunch è già aggiornato all\'ultima versione', 'success', 2500);
