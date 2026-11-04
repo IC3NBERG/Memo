@@ -1,6 +1,6 @@
 {
   "name": "crunch",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Registrazione e trascrizione audio per lezioni universitarie con accelerazione Metal",
   "main": "src/main/main.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "electron-builder --mac",
     "build:dir": "electron-builder --mac --dir",
     "build-whisper": "bash scripts/build-whisper.sh",
+    "benchmark-live": "node scripts/benchmark-live.mjs",
     "install:app": "cp -R dist/mac-arm64/Crunch.app /Applications/ && echo 'Crunch installata con successo in /Applications/Crunch.app!'",
     "postinstall": "electron-builder install-app-deps"
   },

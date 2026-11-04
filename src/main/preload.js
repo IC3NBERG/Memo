@@ -27,6 +27,7 @@ const api = {
   // Trascrizione
   transcriptionStart: (data) => ipcRenderer.send('transcription:start', data),
   transcriptionChunk: (data) => ipcRenderer.invoke('transcription:chunk', data),
+  transcriptionPrewarm: (data) => ipcRenderer.invoke('transcription:prewarm', data),
   onTranscriptionProgress: (cb) => ipcRenderer.on('transcription:progress', (_, pct) => cb(pct)),
   onTranscriptionDone: (cb) => ipcRenderer.on('transcription:done', (_, transcript) => cb(transcript)),
   onTranscriptionError: (cb) => ipcRenderer.on('transcription:error', (_, err) => cb(err)),

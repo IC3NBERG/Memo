@@ -135,6 +135,17 @@ const state = {
   liveProcessorNode: null,
   liveSilentGain: null,
   liveTranscribing: false,
+  liveSamplesCaptured: 0,
+  liveLastInferenceSamples: 0,
+  liveWords: [],
+  liveLanguage: null,
+  liveEngine: null,
+  // Finestra mobile: 8 s di audio con 2 s di sovrapposizione. La sovrapposizione
+  // evita di tagliare le parole ai confini; il merge per timestamp elimina i duplicati.
+  liveWindowSeconds: 8,
+  liveOverlapSeconds: 2,
+  liveTickMs: 2500,
+  preAgcNode: null,
   transcriptionTranslate: false,
 };
 
@@ -156,7 +167,11 @@ const UI = {
 
   updateBanner:        $('update-banner'),
   updateIconSlot:      $('update-icon-slot'),
+  updateBannerTitle:   $('update-banner-title'),
   updateBannerText:    $('update-banner-text'),
+  updateProgress:      $('update-progress'),
+  updateProgressFill:  $('update-progress-fill'),
+  updateProgressPct:   $('update-progress-pct'),
   btnUpdateAction:     $('btn-update-action'),
   btnUpdateDismiss:    $('btn-update-dismiss'),
 
@@ -601,6 +616,7 @@ function setupRecControls() {
     if (state.liveTranscriptionEnabled) {
       UI.liveTextContainer?.classList.remove('hidden');
       UI.liveOffHint?.classList.add('hidden');
+      prewarmLiveEngine();
       if (state.recording && !state.paused) {
         startLiveTranscriptionLoop();
       }
@@ -609,6 +625,11 @@ function setupRecControls() {
       clearInterval(state.liveChunkInterval);
       state.liveChunkInterval = null;
       state.liveSampleBuffer = [];
+      state.liveSamplesCaptured = 0;
+      state.liveLastInferenceSamples = 0;
+      state.liveWords = [];
+      state.liveTextAccumulated = '';
+      state.liveLanguage = null;
       UI.liveTextContainer?.classList.add('hidden');
       UI.liveOffHint?.classList.remove('hidden');
       showToast('Trascrizione Live disattivata (risparmio batteria)', 'info', 2000);
@@ -661,8 +682,8 @@ async function startRecording() {
     const chain = buildAudioPipeline(source);
 
     // Cattura PCM separata per i chunk live: evita di ri-decodificare
-    // l'intera registrazione a ogni intervallo.
-    setupLiveAudioCapture(chain);
+    // l'intera registrazione a ogni intervallo. Preleva prima dell'AGC.
+    await setupLiveAudioCapture(state.preAgcNode || chain);
 
     // Analyser per Waveform
     state.analyserNode = state.audioContext.createAnalyser();
@@ -691,6 +712,11 @@ async function startRecording() {
     state.liveTextAccumulated = '';
     state.liveTextTranslated = false;
     state.liveTranscribing = false;
+    state.liveSamplesCaptured = 0;
+    state.liveLastInferenceSamples = 0;
+    state.liveWords = [];
+    state.liveLanguage = null;
+    state.liveEngine = null;
 
     // Mostra la vista centrale di registrazione (una sola vista alla volta)
     showMainView('recording');
@@ -715,6 +741,7 @@ async function startRecording() {
       state.liveTranscriptionEnabled = true;
       UI.liveTextContainer?.classList.remove('hidden');
       UI.liveOffHint?.classList.add('hidden');
+      prewarmLiveEngine();
       startLiveTranscriptionLoop();
     } else {
       state.liveTranscriptionEnabled = false;
@@ -755,6 +782,7 @@ function buildAudioPipeline(sourceNode) {
   state.agcAnalyser = null;
   state.agcInterval = null;
   state.limiterNode = null;
+  state.preAgcNode = null;
   state.gateOpen = true;
 
   // 1. Filtro passa-alto (80 Hz, Butterworth Q=0.707)
@@ -836,6 +864,10 @@ function buildAudioPipeline(sourceNode) {
     state.compressorNode = comp;
     state.compressorMakeupNode = makeup;
   }
+
+  // Punto di prelievo per la live: prima dell'AGC, così la soglia del
+  // silenzio misura il segnale reale e non il rumore già amplificato.
+  state.preAgcNode = node;
 
   // 4. Auto-Gain reale (AGC): misura l'RMS e regola il guadagno nel tempo
   if (UI.toggleAutogain.checked) {
@@ -930,34 +962,104 @@ function cleanupAudioPipeline() {
   state.gateOpen = true;
 }
 
-// Cattura PCM in tempo reale per la trascrizione live: ogni intervallo
-// inviamo solo i campioni nuovi, non l'intera lezione.
-function setupLiveAudioCapture(chain) {
+// Cattura PCM in tempo reale per la trascrizione live. Usa un AudioWorklet
+// (thread audio dedicato) e ripiega su ScriptProcessor solo se non disponibile.
+function appendLiveSamples(samples) {
+  if (!state.liveTranscriptionEnabled || !state.recording || state.paused) return;
+  state.liveSampleBuffer.push(samples);
+  state.liveSamplesCaptured += samples.length;
+  trimLiveSampleBuffer();
+}
+
+function trimLiveSampleBuffer() {
+  const sr = state.liveSampleRate || 16000;
+  const maxSamples = Math.round((state.liveWindowSeconds + 2) * sr);
+  let total = 0;
+  for (const chunk of state.liveSampleBuffer) total += chunk.length;
+
+  while (total > maxSamples && state.liveSampleBuffer.length) {
+    const first = state.liveSampleBuffer[0];
+    const excess = total - maxSamples;
+    if (first.length <= excess) {
+      state.liveSampleBuffer.shift();
+      total -= first.length;
+    } else {
+      state.liveSampleBuffer[0] = first.subarray(excess);
+      total -= excess;
+    }
+  }
+}
+
+const LIVE_WORKLET_SOURCE = `
+class LiveCaptureProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const input = inputs[0];
+    const channel = input && input[0];
+    if (channel && channel.length) {
+      const copy = new Float32Array(channel);
+      this.port.postMessage(copy, [copy.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor('live-capture', LiveCaptureProcessor);
+`;
+
+async function createLiveWorkletNode(ctx) {
+  const candidates = [];
+  try {
+    candidates.push(new URL('live-capture-worklet.js', window.location.href).href);
+  } catch (_) {}
+  try {
+    candidates.push(URL.createObjectURL(new Blob([LIVE_WORKLET_SOURCE], {
+      type: 'application/javascript',
+    })));
+  } catch (_) {}
+
+  for (const url of candidates) {
+    try {
+      await ctx.audioWorklet.addModule(url);
+      return new AudioWorkletNode(ctx, 'live-capture', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+      });
+    } catch (_) {}
+  }
+  return null;
+}
+
+async function setupLiveAudioCapture(chain) {
   const ctx = state.audioContext;
-  const processor = ctx.createScriptProcessor(4096, 1, 1);
+  state.liveSampleRate = ctx.sampleRate;
 
-  processor.onaudioprocess = (e) => {
-    if (!state.liveTranscriptionEnabled || !state.recording || state.paused) return;
-    const input = e.inputBuffer.getChannelData(0);
-    state.liveSampleBuffer.push(new Float32Array(input));
-  };
+  let node = await createLiveWorkletNode(ctx);
+  if (node) {
+    node.port.onmessage = (e) => appendLiveSamples(new Float32Array(e.data));
+  } else {
+    // Fallback per contesti in cui AudioWorklet non è disponibile.
+    node = ctx.createScriptProcessor(4096, 1, 1);
+    node.onaudioprocess = (e) => {
+      appendLiveSamples(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
+  }
 
-  // Un nodo ScriptProcessor elabora solo se collegato alla destinazione:
+  // Un nodo di cattura elabora solo se collegato alla destinazione:
   // il gain a 0 evita eco o doppio audio.
   const silentGain = ctx.createGain();
   silentGain.gain.value = 0;
-  chain.connect(processor);
-  processor.connect(silentGain);
+  chain.connect(node);
+  node.connect(silentGain);
   silentGain.connect(ctx.destination);
 
-  state.liveProcessorNode = processor;
+  state.liveProcessorNode = node;
   state.liveSilentGain = silentGain;
-  state.liveSampleRate = ctx.sampleRate;
 }
 
 function cleanupLiveAudioCapture() {
   if (state.liveProcessorNode) {
-    state.liveProcessorNode.onaudioprocess = null;
+    try { state.liveProcessorNode.port.onmessage = null; } catch (_) {}
+    try { state.liveProcessorNode.onaudioprocess = null; } catch (_) {}
     try { state.liveProcessorNode.disconnect(); } catch (_) {}
     state.liveProcessorNode = null;
   }
@@ -975,7 +1077,8 @@ function pauseRecording() {
     clearInterval(state.recTimerInterval);
     clearInterval(state.liveChunkInterval);
     state.liveChunkInterval = null;
-    state.liveSampleBuffer = [];
+    // Non azzeriamo il buffer: alla ripresa la finestra resta continua
+    // e il merge per timestamp evita duplicati.
     UI.btnRec.classList.remove('recording');
     updateRecordingPill();
 
@@ -1449,22 +1552,61 @@ function setupTranscriptControls() {
   });
 }
 
-// Loop trascrizione live rapida / istantanea (intervallo 3.5s)
+// Precarica il modello live (whisper-server) senza bloccare la registrazione.
+function prewarmLiveEngine() {
+  if (!state.modelReady) return;
+  const translate = UI.selectTranscribeMode?.value === 'translate' && state.translationModelReady;
+  API.transcriptionPrewarm?.({ translate }).catch?.(() => {});
+}
+
+// Loop di trascrizione live: finestra mobile di 8 s con 2 s di sovrapposizione.
+// Il primo feedback arriva dopo 3,5 s; a regime avanza di 6 s per volta.
 function startLiveTranscriptionLoop() {
   clearInterval(state.liveChunkInterval);
-  state.liveSampleBuffer = [];
+  state.liveChunkInterval = null;
+
+  const sr = state.liveSampleRate || 16000;
+  const minFirstSamples = Math.round(3.5 * sr);
+  const fullWindowSamples = Math.round(state.liveWindowSeconds * sr);
+  const steadyStepSamples = Math.round(
+    Math.max(1, state.liveWindowSeconds - (state.liveOverlapSeconds || 2)) * sr
+  );
+  const earlyStepSamples = Math.round(2 * sr);
 
   const runChunk = async () => {
     if (!state.recording || state.paused || state.liveTranscribing) return;
 
-    const samples = takeLiveSamples();
-    if (!samples) return;
+    const captured = state.liveSamplesCaptured;
+    if (captured < minFirstSamples) return;
 
-    // Evita di inviare silenzio a Whisper: riduce allucinazioni e consumo GPU
-    let energy = 0;
-    for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];
-    const rms = Math.sqrt(energy / samples.length);
-    if (rms < Math.pow(10, -50 / 20)) return;
+    // Prima che la finestra sia piena aggiorna spesso (feedback rapido);
+    // a regime avanza di finestra−overlap per non ricalcolare troppo.
+    const requiredNew = captured >= fullWindowSamples ? steadyStepSamples : earlyStepSamples;
+    if (state.liveLastInferenceSamples &&
+        captured - state.liveLastInferenceSamples < requiredNew) return;
+
+    const windowSamples = Math.min(captured, Math.round(state.liveWindowSeconds * sr));
+    const samples = collectLiveWindow(windowSamples);
+    if (!samples) return;
+    const windowStart = Math.max(0, (captured - samples.length) / sr);
+
+    // VAD sul segnale pre-AGC: scarta silenzio e rumore di fondo prima di Whisper.
+    const level = measureRms(samples);
+    const silenceFloor = Math.pow(10, -45 / 20);
+    if (level < silenceFloor || (state.gateOpen === false && level < Math.pow(10, -38 / 20))) {
+      state.liveLastInferenceSamples = captured;
+      return;
+    }
+
+    // Il taglio dei bordi sposta l'inizio del parlato: l'offset va sommato
+    // ai timestamp restituiti da Whisper, altrimenti le parole slittano.
+    const trimmed = trimSilence(samples);
+    const prepared = normalizeForWhisper(trimmed.samples);
+    if (!prepared || prepared.length < Math.round(0.5 * sr)) {
+      state.liveLastInferenceSamples = captured;
+      return;
+    }
+    const speechStart = windowStart + trimmed.offsetSamples / sr;
 
     const wantsTranslate = UI.selectTranscribeMode?.value === 'translate';
     const isTranslate = wantsTranslate && state.translationModelReady;
@@ -1473,17 +1615,21 @@ function startLiveTranscriptionLoop() {
       state.liveTranslationWarned = true;
       showToast('Traduzione live non disponibile: il modello di traduzione non è ancora scaricato. Registro in lingua originale.', 'info', 5000);
     }
-    const sampleRate = state.liveSampleRate || 16000;
+
+    // Contesto breve: aiuta la continuità di nomi e termini tra un chunk e l'altro.
+    // In traduzione il testo accumulato è inglese: non va usato come prompt
+    // per l'audio italiano, quindi lo si omette.
+    const prompt = isTranslate ? '' : state.liveTextAccumulated.slice(-200).trim();
 
     state.liveTranscribing = true;
     try {
-      const wavBuffer = encodeWav(samples, sampleRate);
+      const wavBuffer = encodeWav(prepared, sr);
 
-      // Inviamo solo i campioni nuovi: costo costante per ogni intervallo
       let res = await API.transcriptionChunk({
         buffer: wavBuffer,
-        language: 'auto',
+        language: state.liveLanguage || 'auto',
         translate: isTranslate,
+        prompt,
       });
 
       // Se il modello di traduzione non c'è, ripieghiamo sulla trascrizione
@@ -1493,8 +1639,9 @@ function startLiveTranscriptionLoop() {
         translatedThisChunk = false;
         res = await API.transcriptionChunk({
           buffer: wavBuffer,
-          language: 'auto',
+          language: state.liveLanguage || 'auto',
           translate: false,
+          prompt,
         });
         if (!state.liveTranslationWarned) {
           state.liveTranslationWarned = true;
@@ -1505,50 +1652,153 @@ function startLiveTranscriptionLoop() {
       // Se la registrazione è terminata nel frattempo, non sporcare la nota
       if (!state.recording) return;
 
-      if (res.success && res.text) {
-        const text = res.text.trim();
-        if (text) {
-          state.liveTextAccumulated = state.liveTextAccumulated
-            ? `${state.liveTextAccumulated} ${text}`
-            : text;
-          state.liveTextTranslated = translatedThisChunk;
-
-          // Aggiorna SOLO l'anteprima live della vista registrazione.
-          // Mai il testo di una nota aperta in parallelo.
-          if (UI.liveStreamText) {
-            UI.liveStreamText.textContent = state.liveTextAccumulated;
-            UI.liveStreamText.scrollTop = UI.liveStreamText.scrollHeight;
-            UI.liveStreamText.classList.add('live-typing');
-          }
+      if (res.success) {
+        // Blocca la lingua dopo il primo rilevamento: evita che chunk brevi
+        // vengano interpretati in una lingua diversa.
+        if (!state.liveLanguage && res.language && res.language !== 'auto') {
+          state.liveLanguage = res.language;
         }
+        state.liveEngine = res.engine || state.liveEngine;
+        mergeLiveResult(res, speechStart, translatedThisChunk);
       }
     } catch (_) {
     } finally {
       state.liveTranscribing = false;
+      state.liveLastInferenceSamples = captured;
     }
   };
 
-  // Esegui ogni 3.5 secondi per dare feedback immediato
-  state.liveChunkInterval = setInterval(runChunk, 3500);
+  state.liveChunkInterval = setInterval(runChunk, state.liveTickMs || 2500);
+  runChunk();
 }
 
-// Estrae e svuota i campioni PCM accumulati dall'ultimo invio
-function takeLiveSamples() {
-  if (!state.liveSampleBuffer.length) return null;
-
+function collectLiveWindow(windowSamples) {
   let total = 0;
   for (const chunk of state.liveSampleBuffer) total += chunk.length;
-  const minSamples = Math.round((state.liveSampleRate || 16000) * 0.4);
-  if (total < minSamples) return null;
+  if (!total) return null;
 
-  const merged = new Float32Array(total);
-  let offset = 0;
+  const take = Math.min(windowSamples, total);
+  const out = new Float32Array(take);
+  let skip = total - take;
+  let written = 0;
+
   for (const chunk of state.liveSampleBuffer) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
+    if (skip >= chunk.length) {
+      skip -= chunk.length;
+      continue;
+    }
+    const slice = skip > 0 ? chunk.subarray(skip) : chunk;
+    skip = 0;
+    const n = Math.min(slice.length, take - written);
+    out.set(slice.subarray(0, n), written);
+    written += n;
+    if (written >= take) break;
   }
-  state.liveSampleBuffer = [];
-  return merged;
+
+  return written ? out.subarray(0, written) : null;
+}
+
+function measureRms(samples) {
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / Math.max(1, samples.length));
+}
+
+// Taglia il silenzio ai bordi: riduce le allucinazioni di inizio/fine chunk.
+// Restituisce anche l'offset in campioni, perché i timestamp di Whisper sono
+// relativi all'audio tagliato e vanno riallineati alla finestra originale.
+function trimSilence(samples) {
+  const threshold = 0.008; // ≈ −42 dB
+  let start = 0;
+  let end = samples.length - 1;
+  while (start < end && Math.abs(samples[start]) < threshold) start++;
+  while (end > start && Math.abs(samples[end]) < threshold) end--;
+
+  if (end - start < samples.length * 0.05) {
+    return { samples, offsetSamples: 0 };
+  }
+
+  const pad = Math.round((state.liveSampleRate || 16000) * 0.15);
+  start = Math.max(0, start - pad);
+  end = Math.min(samples.length - 1, end + pad);
+  return { samples: samples.subarray(start, end + 1), offsetSamples: start };
+}
+
+// Normalizza il chunk a −20 dBFS: Whisper riceve un livello costante,
+// senza dipendere dal pompaggio dell'AGC.
+function normalizeForWhisper(samples) {
+  const rms = measureRms(samples);
+  if (!isFinite(rms) || rms <= 1e-5) return null;
+
+  const target = Math.pow(10, -20 / 20);
+  const gain = Math.min(8, Math.max(0.5, target / rms));
+  const out = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    out[i] = Math.max(-1, Math.min(1, samples[i] * gain));
+  }
+  return out;
+}
+
+// Unisce il risultato del chunk alla trascrizione live usando i timestamp:
+// le parole nella zona di sovrapposizione vengono sostituite, non duplicate.
+function mergeLiveResult(res, windowStart, translated) {
+  const cutoff = Math.max(0, windowStart - 0.25);
+  const incoming = [];
+
+  for (const seg of res.segments || []) {
+    const segStart = Number(seg.start || 0);
+    const segEnd = Number(seg.end || 0);
+    const segWords = Array.isArray(seg.words) && seg.words.length
+      ? seg.words
+      : [{ start: segStart, end: segEnd, text: seg.text }];
+
+    for (const word of segWords) {
+      const text = String(word.text || '').trim();
+      if (!text || /^\[_[^\]]*\]$/.test(text)) continue;
+      const start = windowStart + Number(word.start || 0);
+      if (start < cutoff) continue;
+      incoming.push({
+        start,
+        end: windowStart + Number(word.end || 0),
+        text,
+      });
+    }
+  }
+
+  if (!incoming.length && res.text) {
+    incoming.push({ start: windowStart, end: windowStart, text: res.text.trim() });
+  }
+
+  const kept = state.liveWords.filter((w) => w.start < cutoff);
+  const merged = kept.concat(incoming).sort((a, b) => a.start - b.start || a.end - b.end);
+
+  // Deduplica parole identiche consecutive ai confini di chunk.
+  const deduped = [];
+  for (const word of merged) {
+    const prev = deduped[deduped.length - 1];
+    if (prev && prev.text.toLowerCase() === word.text.toLowerCase()) {
+      prev.end = Math.max(prev.end, word.end);
+      continue;
+    }
+    deduped.push(word);
+  }
+
+  state.liveWords = deduped;
+  state.liveTextAccumulated = deduped
+    .map((w) => w.text)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim();
+  state.liveTextTranslated = translated;
+
+  // Aggiorna SOLO l'anteprima live della vista registrazione.
+  // Mai il testo di una nota aperta in parallelo.
+  if (UI.liveStreamText) {
+    UI.liveStreamText.textContent = state.liveTextAccumulated || 'In ascolto della voce…';
+    UI.liveStreamText.scrollTop = UI.liveStreamText.scrollHeight;
+    UI.liveStreamText.classList.add('live-typing');
+  }
 }
 
 async function startTranscription(rec, isTranslate = false) {
@@ -2441,6 +2691,29 @@ async function ensureTranslationModel() {
 // ══════════════════════════════════════════════════════════════
 // 12. AUTO-UPDATER
 // ══════════════════════════════════════════════════════════════
+
+function formatUpdateSize(bytes) {
+  if (!bytes || bytes <= 0) return '';
+  const mb = bytes / (1024 * 1024);
+  return mb >= 100 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+}
+
+function setUpdateProgress(percent, indeterminate = false) {
+  const wrap = UI.updateProgress;
+  if (!wrap) return;
+  wrap.classList.remove('hidden');
+  wrap.classList.toggle('indeterminate', indeterminate);
+
+  if (indeterminate) {
+    if (UI.updateProgressPct) UI.updateProgressPct.textContent = '';
+    return;
+  }
+
+  const pct = Math.max(0, Math.min(100, Math.round(percent || 0)));
+  if (UI.updateProgressFill) UI.updateProgressFill.style.width = `${pct}%`;
+  if (UI.updateProgressPct) UI.updateProgressPct.textContent = `${pct}%`;
+}
+
 function setupUpdaterControls() {
   if (!API?.onUpdateStatus) return;
 
@@ -2482,27 +2755,47 @@ function setupUpdaterControls() {
     if (!info) return;
     if (info.type === 'available') {
       UI.updateBanner?.classList.remove('hidden');
+      UI.updateBanner?.classList.add('downloading');
+      if (UI.updateBannerTitle) {
+        UI.updateBannerTitle.textContent = info.version ? `Nuova versione v${info.version}` : 'Nuova versione disponibile';
+      }
       if (UI.updateBannerText) UI.updateBannerText.textContent = info.message;
       if (UI.btnUpdateAction) UI.btnUpdateAction.classList.add('hidden');
+      setUpdateProgress(0, true);
       updateBannerOffset();
       showToast(info.message, 'info', 4000);
     } else if (info.type === 'downloaded') {
       UI.updateBanner?.classList.remove('hidden');
-      if (UI.updateBannerText) UI.updateBannerText.textContent = info.message;
+      UI.updateBanner?.classList.remove('downloading');
+      if (UI.updateBannerTitle) {
+        UI.updateBannerTitle.textContent = info.version ? `Versione v${info.version} pronta` : 'Aggiornamento pronto';
+      }
+      if (UI.updateBannerText) UI.updateBannerText.textContent = 'Download completato. Riavvia per applicare l\'aggiornamento.';
       if (UI.btnUpdateAction) UI.btnUpdateAction.classList.remove('hidden');
+      setUpdateProgress(100, false);
       updateBannerOffset();
       showToast('Aggiornamento pronto! Clicca "Riavvia e Aggiorna"', 'success', 6000);
     } else if (info.type === 'not-available') {
       showToast('Crunch è già aggiornato all\'ultima versione', 'success', 2500);
     } else if (info.type === 'error') {
+      UI.updateBanner?.classList.remove('downloading');
+      UI.updateProgress?.classList.add('hidden');
       showToast(`Aggiornamenti: ${info.message}`, 'error', 3500);
     }
   });
 
   API.onUpdateProgress?.((p) => {
+    if (!p || !UI.updateBanner || UI.updateBanner.classList.contains('hidden')) return;
+
+    UI.updateBanner.classList.add('downloading');
+    const transferred = formatUpdateSize(p.transferred);
+    const total = formatUpdateSize(p.total);
     if (UI.updateBannerText) {
-      UI.updateBannerText.textContent = `Scaricamento aggiornamento... ${p.percent}%`;
+      UI.updateBannerText.textContent = transferred && total
+        ? `Scaricamento in corso · ${transferred} di ${total}`
+        : 'Scaricamento in corso…';
     }
+    setUpdateProgress(p.percent, false);
   });
 }
 

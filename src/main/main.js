@@ -57,6 +57,15 @@ function getWhisperBinPath() {
   return path.join(__dirname, '..', '..', 'bin', 'whisper-cli');
 }
 
+// Motore live persistente: whisper-server tiene il modello caricato in memoria
+// tra un chunk e l'altro, eliminando ~1,5 s di reload per ogni intervallo.
+function getWhisperServerPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'bin', 'whisper-server');
+  }
+  return path.join(__dirname, '..', '..', 'bin', 'whisper-server');
+}
+
 // ─── Validazione percorsi IPC ──────────────────────────────────────────────
 // Il renderer non deve poter leggere/scrivere/eliminare percorsi arbitrari.
 function isPathInsideRecordings(targetPath) {
@@ -668,8 +677,294 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
   });
 });
 
+// ─── Motore live persistente (whisper-server) ──────────────────────────────
+let whisperServer = null;        // { proc, port, modelPath }
+let whisperServerStarting = null;
+let whisperServerIdleTimer = null;
+let whisperServerDisabledUntil = 0;
+
+function stopWhisperServer() {
+  if (whisperServerIdleTimer) {
+    clearTimeout(whisperServerIdleTimer);
+    whisperServerIdleTimer = null;
+  }
+  if (!whisperServer) return;
+  const proc = whisperServer.proc;
+  whisperServer = null;
+  try { proc.kill('SIGTERM'); } catch (_) {}
+}
+
+function scheduleWhisperServerIdleStop() {
+  if (whisperServerIdleTimer) clearTimeout(whisperServerIdleTimer);
+  whisperServerIdleTimer = setTimeout(() => stopWhisperServer(), 5 * 60 * 1000);
+  if (whisperServerIdleTimer.unref) whisperServerIdleTimer.unref();
+}
+
+async function waitForWhisperServer(port, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`, { method: 'GET' });
+      if (res.ok || res.status === 404) return true;
+    } catch (_) {}
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
+}
+
+async function ensureWhisperServer(modelPath) {
+  if (Date.now() < whisperServerDisabledUntil) return null;
+
+  if (whisperServer && whisperServer.modelPath === modelPath) {
+    scheduleWhisperServerIdleStop();
+    return whisperServer;
+  }
+
+  if (whisperServerStarting) {
+    const started = await whisperServerStarting;
+    if (started && started.modelPath === modelPath) return started;
+  }
+
+  stopWhisperServer();
+
+  const serverBin = getWhisperServerPath();
+  if (!fs.existsSync(serverBin)) return null;
+
+  const port = 18000 + Math.floor(Math.random() * 2000);
+  const proc = spawn(serverBin, [
+    '--model', modelPath,
+    '--host', '127.0.0.1',
+    '--port', String(port),
+    '--threads', '4',
+    '--beam-size', '5',
+    '--suppress-nst',
+    '--no-speech-thold', '0.6',
+    '--language', 'auto',
+  ], { stdio: ['ignore', 'ignore', 'ignore'] });
+
+  const entry = { proc, port, modelPath };
+  whisperServerStarting = (async () => {
+    const ready = await waitForWhisperServer(port);
+    if (!ready) {
+      // Se il server non parte, usa la CLI per i prossimi 60 s senza riprovare.
+      whisperServerDisabledUntil = Date.now() + 60000;
+      try { proc.kill('SIGTERM'); } catch (_) {}
+      return null;
+    }
+    whisperServer = entry;
+    proc.on('exit', () => {
+      if (whisperServer === entry) whisperServer = null;
+    });
+    scheduleWhisperServerIdleStop();
+    return entry;
+  })();
+
+  const started = await whisperServerStarting;
+  whisperServerStarting = null;
+  return started;
+}
+
+function wordsFromSegments(segments) {
+  const words = [];
+  for (const seg of segments || []) {
+    const segStart = Number(seg.start || 0);
+    const segEnd = Number(seg.end || 0);
+    const tokens = Array.isArray(seg.words) && seg.words.length
+      ? seg.words
+      : [{ word: seg.text, start: segStart, end: segEnd }];
+
+    // Il server restituisce token/sottoparole: vanno ricomposti in parole
+    // usando lo spazio iniziale come confine ("g" + "atto" → "gatto").
+    let current = null;
+    for (const token of tokens) {
+      const raw = String(token.word ?? token.text ?? '');
+      if (!raw) continue;
+      const start = Number(token.start ?? segStart);
+      const end = Number(token.end ?? segEnd);
+      const leadingSpace = /^\s/.test(raw);
+      const text = raw.replace(/^\s+/, '');
+      if (!text || /^\[_[^\]]*\]$/.test(text)) continue;
+
+      if (leadingSpace || !current) {
+        if (current) words.push(current);
+        current = { start, end, text };
+      } else {
+        current.text += text;
+        current.end = end;
+      }
+    }
+    if (current) words.push(current);
+  }
+  return words;
+}
+
+async function transcribeChunkWithServer(entry, buffer, { language, translate, prompt }) {
+  const form = new FormData();
+  form.append('file', new Blob([buffer], { type: 'audio/wav' }), 'chunk.wav');
+  form.append('response_format', 'verbose_json');
+  form.append('language', language || 'auto');
+  form.append('translate', translate ? 'true' : 'false');
+  form.append('token_timestamps', 'true');
+  form.append('suppress_nst', 'true');
+  form.append('no_speech_thold', '0.6');
+  if (prompt) form.append('prompt', prompt);
+
+  const res = await fetch(`http://127.0.0.1:${entry.port}/inference`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(`whisper-server HTTP ${res.status}`);
+  const data = await res.json();
+
+  const segments = (data.segments || []).map((seg) => ({
+    start: Number(seg.start || 0),
+    end: Number(seg.end || 0),
+    text: String(seg.text || '').trim(),
+    words: wordsFromSegments([seg]),
+  }));
+
+  return {
+    text: String(data.text || '').trim(),
+    language: data.language || data.detected_language || null,
+    segments,
+  };
+}
+
+// Converte i token di whisper-cli (--output-json-full) in parole con timestamp.
+function wordsFromCliTokens(tokens, segStart, segEnd) {
+  const words = [];
+  let current = null;
+
+  for (const token of tokens || []) {
+    const raw = String(token.text ?? '');
+    if (!raw) continue;
+    const start = token.offsets ? Number(token.offsets.from) / 1000 : segStart;
+    const end = token.offsets ? Number(token.offsets.to) / 1000 : segEnd;
+    const leadingSpace = /^\s/.test(raw);
+    const text = raw.replace(/^\s+/, '');
+    // I token speciali di whisper.cpp ([_BEG_], [_TT_...]) non sono parlato.
+    if (!text || /^\[_[^\]]*\]$/.test(text)) continue;
+
+    if (leadingSpace || !current) {
+      if (current) words.push(current);
+      current = { start, end, text };
+    } else {
+      current.text += text;
+      current.end = end;
+    }
+  }
+  if (current) words.push(current);
+  return words;
+}
+
+function parseCliChunkJson(raw) {
+  const segments = [];
+  for (const seg of raw.transcription || []) {
+    const start = seg.offsets ? Number(seg.offsets.from) / 1000 : 0;
+    const end = seg.offsets ? Number(seg.offsets.to) / 1000 : 0;
+    const text = String(seg.text || '')
+      .replace(/\[_[^\]]*\]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const words = wordsFromCliTokens(seg.tokens, start, end);
+    segments.push({
+      start,
+      end,
+      text,
+      words: words.length ? words : [{ start, end, text }],
+    });
+  }
+  return {
+    language: raw.result?.language || null,
+    segments,
+  };
+}
+
+function transcribeChunkWithCli(buffer, { language, translate, prompt }) {
+  const whisperBin = getWhisperBinPath();
+  if (!fs.existsSync(whisperBin)) return null;
+
+  const modelPath = translate ? getTranslationModelPath() : getModelPath();
+  const tmpId = Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+  const tmpWav = path.join(os.tmpdir(), `crunch_chunk_${tmpId}.wav`);
+  const tmpOut = path.join(os.tmpdir(), `crunch_chunk_out_${tmpId}`);
+
+  fs.writeFileSync(tmpWav, Buffer.from(buffer));
+
+  const args = [
+    '--model', modelPath,
+    '--output-json-full',
+    '--output-file', tmpOut,
+    '--file', tmpWav,
+    '--threads', '4',
+    '--language', language || 'auto',
+    '--suppress-nst',
+    '--no-speech-thold', '0.6',
+    '--beam-size', '5',
+    '--no-prints',
+  ];
+
+  if (prompt) args.push('--prompt', prompt, '--carry-initial-prompt');
+  if (translate) args.push('--translate');
+
+  return new Promise((resolve) => {
+    const proc = spawn(whisperBin, args);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    const cleanup = () => {
+      try { if (fs.existsSync(tmpWav)) fs.unlinkSync(tmpWav); } catch (_) {}
+      try { if (fs.existsSync(tmpOut + '.json')) fs.unlinkSync(tmpOut + '.json'); } catch (_) {}
+    };
+
+    proc.on('close', (code) => {
+      try {
+        if (code !== 0) {
+          cleanup();
+          resolve({ success: false, error: `whisper exit code ${code}: ${stderr.slice(-200)}` });
+          return;
+        }
+        const jsonFile = tmpOut + '.json';
+        if (!fs.existsSync(jsonFile)) {
+          cleanup();
+          resolve({ success: false, error: 'Risposta whisper-cli priva di JSON' });
+          return;
+        }
+        const raw = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
+        const parsed = parseCliChunkJson(raw);
+        cleanup();
+        resolve({
+          success: true,
+          engine: 'cli',
+          text: parsed.segments.map((s) => s.text).join(' ').trim(),
+          language: parsed.language,
+          segments: parsed.segments,
+        });
+      } catch (err) {
+        cleanup();
+        resolve({ success: false, error: err.message });
+      }
+    });
+
+    proc.on('error', (err) => {
+      cleanup();
+      resolve({ success: false, error: err.message });
+    });
+  });
+}
+
 // ─── IPC: Trascrizione Chunk Live (Ultra-rapida Metal) ──────────────────────
-ipcMain.handle('transcription:chunk', async (event, { buffer, language, translate }) => {
+ipcMain.handle('transcription:prewarm', async (event, { translate } = {}) => {
+  const isTranslate = !!translate;
+  const modelPath = isTranslate ? getTranslationModelPath() : getModelPath();
+  if (!fs.existsSync(modelPath)) {
+    return { success: false, code: isTranslate ? 'translation-model-missing' : 'model-missing' };
+  }
+  const server = await ensureWhisperServer(modelPath);
+  return { success: !!server, engine: server ? 'server' : 'cli' };
+});
+
+ipcMain.handle('transcription:chunk', async (event, { buffer, language, translate, prompt }) => {
   const isTranslate = !!translate;
   const currentModelPath = isTranslate ? getTranslationModelPath() : getModelPath();
   if (!fs.existsSync(currentModelPath)) {
@@ -679,70 +974,31 @@ ipcMain.handle('transcription:chunk', async (event, { buffer, language, translat
       error: isTranslate ? 'Modello di traduzione non pronto' : 'Modello non pronto',
     };
   }
-  const whisperBin = getWhisperBinPath();
-  if (!fs.existsSync(whisperBin)) {
-    return { success: false, error: 'whisper-cli non trovato' };
-  }
 
-  const tmpId = Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-  const tmpWav = path.join(os.tmpdir(), `crunch_chunk_${tmpId}.wav`);
-  const tmpOut = path.join(os.tmpdir(), `crunch_chunk_out_${tmpId}`);
-
-  try {
-    fs.writeFileSync(tmpWav, Buffer.from(buffer));
-
-    const args = [
-      '--model', currentModelPath,
-      '--output-txt',
-      '--output-file', tmpOut,
-      '--no-timestamps',
-      '--file', tmpWav,
-      '--threads', '4',
-      '--language', language || 'auto',
-    ];
-
-    if (translate) {
-      args.push('--translate');
+  // Preferisce il server persistente: modello già caldo, latenza più bassa.
+  const server = await ensureWhisperServer(currentModelPath);
+  if (server) {
+    try {
+      const result = await transcribeChunkWithServer(server, Buffer.from(buffer), {
+        language,
+        translate: isTranslate,
+        prompt,
+      });
+      return { success: true, engine: 'server', ...result };
+    } catch (err) {
+      // Il server è caduto o ha risposto male: lo fermiamo e ripieghiamo sulla CLI.
+      stopWhisperServer();
+      whisperServerDisabledUntil = Date.now() + 60000;
     }
-
-    return new Promise((resolve) => {
-      const proc = spawn(whisperBin, args);
-      let stderr = '';
-      proc.stderr.on('data', (d) => { stderr += d.toString(); });
-
-      proc.on('close', (code) => {
-        try {
-          const txtFile = tmpOut + '.txt';
-          let text = '';
-          if (fs.existsSync(txtFile)) {
-            text = fs.readFileSync(txtFile, 'utf8').trim();
-            try { fs.unlinkSync(txtFile); } catch (_) {}
-          }
-          if (fs.existsSync(tmpWav)) {
-            try { fs.unlinkSync(tmpWav); } catch (_) {}
-          }
-
-          if (code === 0) {
-            resolve({ success: true, text });
-          } else {
-            resolve({ success: false, error: `whisper exit code ${code}: ${stderr.slice(-200)}` });
-          }
-        } catch (e) {
-          resolve({ success: false, error: e.message });
-        }
-      });
-
-      proc.on('error', (err) => {
-        if (fs.existsSync(tmpWav)) {
-          try { fs.unlinkSync(tmpWav); } catch (_) {}
-        }
-        resolve({ success: false, error: err.message });
-      });
-    });
-  } catch (err) {
-    return { success: false, error: err.message };
   }
+
+  const fallback = transcribeChunkWithCli(buffer, { language, translate: isTranslate, prompt });
+  if (!fallback) return { success: false, error: 'whisper-cli non trovato' };
+  return fallback;
 });
+
+// Libera la memoria del modello live quando l'app si chiude.
+app.on('before-quit', () => stopWhisperServer());
 
 // ─── IPC: Libreria ─────────────────────────────────────────────────────────
 ipcMain.handle('library:get', () => {

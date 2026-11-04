@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' file:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:; media-src 'self' file:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;" />
   <title>Crunch</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" />
@@ -42,7 +42,16 @@
     <div id="update-banner" class="hidden">
       <div class="update-banner-inner">
         <span class="update-banner-icon" id="update-icon-slot"></span>
-        <span id="update-banner-text">Nuovo aggiornamento disponibile.</span>
+        <div class="update-banner-text">
+          <strong id="update-banner-title">Nuova versione disponibile</strong>
+          <span id="update-banner-text">Nuovo aggiornamento disponibile.</span>
+        </div>
+        <div id="update-progress" class="update-progress-wrap hidden">
+          <div class="update-progress-bar">
+            <div id="update-progress-fill"></div>
+          </div>
+          <span id="update-progress-pct">0%</span>
+        </div>
         <button id="btn-update-action" class="btn-primary btn-sm">Riavvia e Aggiorna</button>
         <button id="btn-update-dismiss" class="tb-btn" title="Chiudi avviso">✕</button>
       </div>

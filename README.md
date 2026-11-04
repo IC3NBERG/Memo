@@ -7,9 +7,9 @@ Crunch è un'applicazione desktop per macOS Apple Silicon che registra, trascriv
 [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-000000?logo=apple&logoColor=white)](#integrazione-con-apple)
 [![Engine](https://img.shields.io/badge/engine-whisper.cpp%20%2B%20Metal-2563EB)](#i-modelli-ai-scelta-e-funzionamento)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20locale-15803D)](#privacy-dati-e-sicurezza)
-[![Version](https://img.shields.io/badge/version-1.0.8-6B7280)](#)
+[![Version](https://img.shields.io/badge/version-1.0.9-6B7280)](#)
 
-> **Stato attuale: v1.0.8 — macOS (Apple Silicon).**
+> **Stato attuale: v1.0.9 — macOS (Apple Silicon).**
 > Windows e Linux sono nella roadmap e verranno supportati: vedi [Piattaforme e promessa cross-platform](#piattaforme-e-promessa-cross-platform).
 
 ---
@@ -107,17 +107,28 @@ Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — orga
 
 ## Stato del prodotto
 
-| Area | Disponibile nella v1.0.8 | In roadmap |
+| Area | Disponibile nella v1.0.9 | In roadmap |
 |---|---|---|
 | Registrazione locale | ✅ microfono, pausa/ripresa, WAV 16 kHz | doppia sorgente microfono + sistema |
 | Preprocessing audio | ✅ passa-alto, noise gate, compressore, AGC adattivo, limiter | preset per ambiente |
-| Trascrizione | ✅ live a chunk e completa al 100% | word-level timestamp |
+| Trascrizione | ✅ live a finestra mobile (8 s, overlap 2 s) e completa al 100% | word-level timestamp persistiti |
 | Lingue | ✅ rilevamento automatico, traduzione in inglese con modello dedicato | selezione esplicita del modello |
 | Organizzazione | ✅ gruppi, rinomina, spostamento, anti-sovrascrittura | sezioni manuali, blocchi |
 | Consultazione | ✅ ricerca testuale, timestamp, player, copia, export | ricerca FTS5, seek dal timestamp |
 | Gestione modelli | ✅ dormienti: download solo su richiesta, offline dopo il primo scaricamento | verifica integrità e aggiornamento modelli |
 | Intelligenza del contenuto | — | diarizzazione, speaker persistenti, highlight, sintesi citabile |
 | Piattaforme | ✅ macOS Apple Silicon | Windows, Linux |
+
+### Novità della v1.0.9
+
+- **Finestra live da 8 s con 2 s di sovrapposizione**: il primo feedback resta a 3,5 s; finché la finestra non è piena gli aggiornamenti sono frequenti, poi avanzano di 6 s (8 − 2). Le parole ai confini non vengono più tagliate.
+- **Merge per timestamp**: ogni chunk restituisce parole con offset; la zona di sovrapposizione viene sostituita invece di essere concatenata. Niente più duplicati o salti al confine tra chunk.
+- **Lingua bloccata dopo il primo rilevamento**: `auto` viene usato solo per il primo chunk, poi la lingua resta stabile per tutta la sessione. `auto` resta il default della trascrizione completa.
+- **AudioWorklet al posto di ScriptProcessor**: la cattura PCM gira nel thread audio dedicato e non perde buffer quando l'interfaccia è sotto carico.
+- **Silenzio misurato prima dell'AGC**: la soglia VAD lavora sul segnale reale, non sul rumore già amplificato. Il chunk viene inoltre normalizzato a −20 dBFS e rifilato ai bordi.
+- **Motore persistente**: `whisper-server` tiene il modello caricato tra un chunk e l'altro; se non è disponibile, Crunch ripiega automaticamente su `whisper-cli`. Latenza media per chunk: circa 1,9 s su M4 con finestra da 8 s.
+- **Prompt di continuità**: gli ultimi 200 caratteri della trascrizione vengono passati come contesto, con `--suppress-nst` e soglia no-speech a 0,6 per ridurre le allucinazioni.
+- **Benchmark riproducibile**: `npm run benchmark-live` confronta 3,5 s / 8 s / 10 s con e senza overlap, misura il WER rispetto alla trascrizione integrale e la latenza per chunk.
 
 ### Novità della v1.0.8
 
@@ -153,10 +164,10 @@ Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — orga
               │                                  │
 ┌─────────────▼─────────────┐      ┌─────────────▼──────────────────────┐
 │ 3a. ANTEPRIMA LIVE        │      │ 3b. REGISTRAZIONE DEFINITIVA       │
-│ chunk PCM ogni 3,5 s      │      │ MediaRecorder (Opus/WebM)          │
-│ solo campioni nuovi       │      │ → decode → WAV PCM 16 bit mono     │
+│ finestra 8 s, overlap 2 s │      │ MediaRecorder (Opus/WebM)          │
+│ AudioWorklet + VAD        │      │ → decode → WAV PCM 16 bit mono     │
 │ whisper.cpp + Metal       │      │ → ~/CrunchRecordings/.../audio.wav │
-│ output senza timestamp    │      │ persistito su disco                │
+│ merge per timestamp       │      │ persistito su disco                │
 └─────────────┬─────────────┘      └─────────────┬──────────────────────┘
               │                                  │
               ▼                                  ▼
@@ -193,11 +204,11 @@ I quattro controlli formano una catena DSP costruita con la Web Audio API:
 
 L'AGC è reale: misura l'RMS del segnale e corregge il guadagno nel tempo, con riduzione rapida dei picchi e aumento graduale per evitare il "pompaggio". Il limiter finale è sempre attivo, mentre i quattro toggle si applicano dalla registrazione successiva: durante una REC sono bloccati per non alterare l'audio a metà lezione.
 
-La stessa catena alimenta tre rami: il **MediaRecorder** per il file definitivo, lo **ScriptProcessor** per i chunk live e un **AnalyserNode** per la forma d'onda a 60 fps.
+La stessa catena alimenta tre rami: il **MediaRecorder** per il file definitivo, l’**AudioWorklet** per i chunk live e un **AnalyserNode** per la forma d'onda a 60 fps.
 
 ### 3. Due modalità di trascrizione
 
-**Anteprima live (≈3,5 s).** Ogni 3,5 secondi Crunch preleva solo i campioni PCM accumulati dall'ultimo invio, costruisce un WAV temporaneo e invoca `whisper-cli` con `--no-timestamps`. I chunk sotto −50 dB RMS vengono scartati per ridurre le allucinazioni sul silenzio. Il testo viene concatenato e mostrato in tempo reale.
+**Anteprima live (finestra mobile).** Il primo feedback arriva dopo 3,5 s; poi Crunch trascrive una finestra di 8 s con 2 s di sovrapposizione (aggiornamenti frequenti all'inizio, poi ogni 6 s). La cattura avviene in un **AudioWorklet** sul thread audio e preleva il segnale **prima dell'AGC**: il VAD misura così il livello reale e scarta silenzio e rumore di fondo sotto −45 dB. Il chunk viene rifilato ai bordi e normalizzato a −20 dBFS. La lingua viene rilevata una sola volta e poi bloccata; `--suppress-nst` e una soglia no-speech di 0,6 riducono le allucinazioni. Ogni chunk restituisce parole con timestamp: la zona di sovrapposizione viene sostituita, non concatenata, quindi niente duplicati ai confini.
 
 **Trascrizione completa (100%).** Al termine della sessione, il file `audio.wav` originale viene rianalizzato per intero. Questa è la trascrizione di riferimento: produce segmenti con offset in millisecondi e sostituisce l'anteprima. Crunch distingue esplicitamente `isLivePreview` da `isCompleteTranscript`, così un'anteprima non viene mai presentata come definitiva.
 
@@ -379,7 +390,7 @@ Regole implementate in `src/main/main.js`:
 - Se il modello richiesto manca, l'IPC restituisce un codice esplicito (`model-missing` / `translation-model-missing`) e la UI propone il download: nessun errore silenzioso.
 - Se in modalità live manca il modello di traduzione, l'anteprima continua in lingua originale con un avviso una tantum, invece di interrompere la lezione.
 - I download sono in streaming su file `.tmp`, protetti da avvii concorrenti, e vengono rinominati solo al completamento, con supporto ai redirect (Hugging Face → CDN) e limite di 10 redirect.
-- La trascrizione live rifiuta chunk troppo corti (< 0,4 s) o troppo silenziosi (< −50 dB RMS).
+- La trascrizione live rifiuta chunk troppo corti (< 0,5 s) o troppo silenziosi (< −45 dB RMS misurati prima dell'AGC); il segnale viene rifilato e normalizzato a −20 dBFS.
 - Una sola trascrizione completa alla volta (`activeTranscription`): nessun processo concorrente che competa per la GPU.
 
 ### Come lavora whisper.cpp su Apple Silicon
@@ -696,7 +707,7 @@ npm run build:dir    # solo .app, senza installer
 npm run install:app  # copia Crunch.app in /Applications
 ```
 
-L'app pacchettizzata include `bin/` come `extraResources`, quindi `whisper-cli` è disponibile dentro il bundle.
+L'app pacchettizzata include `bin/` come `extraResources`: `whisper-cli`, `whisper-server` e le librerie `libggml`/`libwhisper` sono dentro il bundle. Lo script di build imposta il rpath a `@executable_path`, così i binari non dipendono da `/tmp/whisper.cpp` e funzionano anche su un Mac dove il sorgente non è presente.
 
 ### Struttura di una release
 
@@ -723,13 +734,39 @@ Vedi `RELEASE_WORKFLOW.md` per la procedura operativa completa.
 | Modello trascrizione | ≈1,5 GB |
 | Modello traduzione | ≈1,4 GB |
 | Thread CPU ASR | 4 |
-| Intervallo live | 3,5 s |
-| Soglia silenzio live | −50 dB RMS |
-| Durata minima chunk | 0,4 s |
+| Prima anteprima live | 3,5 s |
+| Finestra live | 8 s con 2 s di sovrapposizione |
+| Aggiornamento live | ogni 2,5 s all'inizio, poi ogni 6 s |
+| Soglia silenzio live | −45 dB RMS, misurata prima dell'AGC |
+| Durata minima chunk | 0,5 s |
 | Accuratezza trascrizione live | parziale, sostituita dalla completa |
 | Accuratezza trascrizione completa | riferimento, segmenti con timestamp |
-| Backend | whisper.cpp + Metal (arm64) |
+| Backend | whisper-server persistente + fallback whisper-cli, Metal (arm64) |
 | Rete richiesta | solo download modelli e aggiornamenti |
+
+### Benchmark della trascrizione live
+
+Lo script `scripts/benchmark-live.mjs` (`npm run benchmark-live`) simula la finestra mobile, trascrive ogni chunk con `whisper-cli` e confronta il testo unito con la trascrizione integrale dello stesso file. Misura il **WER** (word error rate) e la latenza media per chunk.
+
+```bash
+npm run benchmark-live -- \
+  --audio "$HOME/CrunchRecordings/_unsorted/test/audio.wav" \
+  --model "$HOME/CrunchRecordings/.models/ggml-large-v3-turbo.bin" \
+  --language it --windows 3.5,8,10 --overlaps 0,2
+```
+
+Risultato su una registrazione di prova di 72 s (italiano, `large-v3-turbo`, M4):
+
+| Finestra | Overlap | Chunk | Latenza media | WER |
+|---|---|---|---|---|
+| **8 s** | **2 s** | 12 | 1,93 s | **6,2%** |
+| 10 s | 0 s | 8 | 2,04 s | 7,3% |
+| 8 s | 0 s | 9 | 1,82 s | 9,6% |
+| 3,5 s | 0 s | 21 | 1,62 s | 12,4% |
+| 10 s | 2 s | 9 | 1,89 s | 17,4% |
+| 3,5 s | 2 s | 48 | 1,77 s | 19,7% |
+
+La configurazione scelta per l'app è **8 s con 2 s di overlap**: è la più accurata e mantiene la latenza sotto i 2 s per chunk. Il WER resta un indicatore relativo: la trascrizione completa sul WAV originale è comunque il riferimento.
 
 ### Comandi IPC principali
 
@@ -738,7 +775,8 @@ Vedi `RELEASE_WORKFLOW.md` per la procedura operativa completa.
 | `recording:save` | invoke | salva WAV e metadata, con anti-collisione |
 | `recording:move` / `rename` / `delete` | invoke | gestione registrazioni |
 | `transcription:start` | send | trascrizione completa (con `--output-json`) |
-| `transcription:chunk` | invoke | trascrizione live di un chunk PCM |
+| `transcription:prewarm` | invoke | carica il modello live nel server persistente |
+| `transcription:chunk` | invoke | chunk PCM con timestamp, prompt e lingua bloccata |
 | `transcript:read` / `save` / `export` | invoke | lettura, salvataggio, export |
 | `library:get` | invoke | ricostruisce la libreria dal filesystem |
 | `folder:create` / `rename` / `delete` | invoke | gestione gruppi |
@@ -759,7 +797,10 @@ Vedi `RELEASE_WORKFLOW.md` per la procedura operativa completa.
 --threads 4             thread CPU
 --language auto         rilevamento lingua
 --translate             solo con modello medium
---no-timestamps         solo chunk live
+--output-json-full      parole con timestamp (chunk live)
+--prompt <testo>        contesto breve tra chunk
+--suppress-nst          riduce i token non-parlato
+--no-speech-thold 0.6   soglia anti-allucinazione
 ```
 
 ### URL dei modelli
@@ -796,7 +837,7 @@ https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
 | Nessun audio o trascrizione vuota | permesso microfono negato | Impostazioni di Sistema → Privacy → Microfono |
 | App bloccata da Gatekeeper | build non firmata | tasto destro → Apri, oppure usare l'updater interno |
 | Trascrizione lenta | modello grande, GPU occupata, batteria | chiudere applicazioni pesanti, mantenere il Mac alimentato |
-| Testo live impreciso | chunk brevi e silenzio | comportamento atteso: usare la trascrizione completa a fine sessione |
+| Testo live impreciso | rumore, voce lontana o lingua instabile | l'anteprima è parziale per definizione; la trascrizione completa sul WAV è il riferimento |
 
 ---
 
