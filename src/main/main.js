@@ -11,6 +11,7 @@ const { autoUpdater } = require('electron-updater');
 const manualUpdater = require('./updater');
 const { createPathGuard, isSafeFolderName } = require('../core/storage/path-guard');
 const transcriptStore = require('../core/transcript/store');
+const { readMetadataFile, updateMetadataFile } = require('../core/library/metadata');
 const {
   createRecordingSaveHandler,
   createTranscriptReadHandler,
@@ -487,12 +488,7 @@ ipcMain.handle('recording:update-duration', (event, { recDir, duration }) => {
     if (!isValidRecordingDir(recDir)) {
       return { success: false, error: 'Registrazione non valida' };
     }
-    const metaPath = path.join(recDir, 'metadata.json');
-    if (fs.existsSync(metaPath)) {
-      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      meta.duration = duration;
-      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-    }
+    updateMetadataFile(recDir, (meta) => ({ ...meta, duration }));
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -990,16 +986,8 @@ function getRecordingsInDir(dir, folderName) {
     .filter(e => e.isDirectory())
     .map(e => {
       const recDir = path.join(dir, e.name);
-      const metaPath = path.join(recDir, 'metadata.json');
-      let meta;
-      try {
-        meta = fs.existsSync(metaPath)
-          ? JSON.parse(fs.readFileSync(metaPath, 'utf8'))
-          : { name: e.name, date: null, duration: 0, hasTranscript: false };
-      } catch (_) {
-        // Metadata corrotto: non bloccare l'intera libreria
-        meta = { name: e.name, date: null, duration: 0, hasTranscript: false };
-      }
+      const parsed = readMetadataFile(recDir);
+      const meta = parsed || { name: e.name, date: null, duration: 0, hasTranscript: false };
 
       // Testo della trascrizione per la ricerca full-text nella sidebar
       let searchText = '';
@@ -1030,13 +1018,7 @@ function getRecordingsInDir(dir, folderName) {
 
 // Aggiorna il campo folder del metadata dopo uno spostamento/rinomina
 function updateMetadataFolder(recDir, folder) {
-  const metaPath = path.join(recDir, 'metadata.json');
-  if (!fs.existsSync(metaPath)) return;
-  try {
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-    meta.folder = folder;
-    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-  } catch (_) {}
+  updateMetadataFile(recDir, (meta) => ({ ...meta, folder }));
 }
 
 // Restituisce un percorso libero, evitando di sovrascrivere cartelle esistenti
@@ -1164,9 +1146,7 @@ ipcMain.handle('recording:move', (event, { recDir, targetFolder }) => {
     }
     const metaPath = path.join(destPath, 'metadata.json');
     if (fs.existsSync(metaPath)) {
-      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      meta.folder = targetFolder || null;
-      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+      updateMetadataFile(destPath, (meta) => ({ ...meta, folder: targetFolder || null }));
     }
 
     return { success: true, newPath: destPath };
@@ -1183,12 +1163,7 @@ ipcMain.handle('recording:rename', (event, { recDir, newName }) => {
     }
     const safeName = newName.replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim();
     if (!safeName) return { success: false, error: 'Nome non valido' };
-    const metaPath = path.join(recDir, 'metadata.json');
-    if (fs.existsSync(metaPath)) {
-      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      meta.name = safeName;
-      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-    }
+    updateMetadataFile(recDir, (meta) => ({ ...meta, name: safeName }));
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1228,7 +1203,7 @@ ipcMain.handle('transcript:export', async (event, { recDir, format, text }) => {
     if (!isValidRecordingDir(recDir)) {
       return { success: false, error: 'Registrazione non valida' };
     }
-    const meta = JSON.parse(fs.readFileSync(path.join(recDir, 'metadata.json'), 'utf8'));
+    const meta = readMetadataFile(recDir) || {};
     const ext = format === 'md' ? '.md' : '.txt';
     const defaultName = `${meta.name || 'trascrizione'}${ext}`;
 

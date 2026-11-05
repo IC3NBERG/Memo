@@ -1586,12 +1586,12 @@ function startLiveTranscriptionLoop() {
         captured - state.liveLastInferenceSamples < requiredNew) return;
 
     const windowSamples = Math.min(captured, Math.round(state.liveWindowSeconds * sr));
-    const samples = collectLiveWindow(windowSamples);
+    const samples = AudioDSP.collectLiveWindow(state.liveSampleBuffer, windowSamples);
     if (!samples) return;
     const windowStart = Math.max(0, (captured - samples.length) / sr);
 
     // VAD sul segnale pre-AGC: scarta silenzio e rumore di fondo prima di Whisper.
-    const level = measureRms(samples);
+    const level = AudioDSP.measureRms(samples);
     const silenceFloor = Math.pow(10, -45 / 20);
     if (level < silenceFloor || (state.gateOpen === false && level < Math.pow(10, -38 / 20))) {
       state.liveLastInferenceSamples = captured;
@@ -1600,8 +1600,8 @@ function startLiveTranscriptionLoop() {
 
     // Il taglio dei bordi sposta l'inizio del parlato: l'offset va sommato
     // ai timestamp restituiti da Whisper, altrimenti le parole slittano.
-    const trimmed = trimSilence(samples);
-    const prepared = normalizeForWhisper(trimmed.samples);
+    const trimmed = AudioDSP.trimSilence(samples, state.liveSampleRate || 16000);
+    const prepared = AudioDSP.normalizeForWhisper(trimmed.samples);
     if (!prepared || prepared.length < Math.round(0.5 * sr)) {
       state.liveLastInferenceSamples = captured;
       return;
@@ -1670,73 +1670,6 @@ function startLiveTranscriptionLoop() {
 
   state.liveChunkInterval = setInterval(runChunk, state.liveTickMs || 2500);
   runChunk();
-}
-
-function collectLiveWindow(windowSamples) {
-  let total = 0;
-  for (const chunk of state.liveSampleBuffer) total += chunk.length;
-  if (!total) return null;
-
-  const take = Math.min(windowSamples, total);
-  const out = new Float32Array(take);
-  let skip = total - take;
-  let written = 0;
-
-  for (const chunk of state.liveSampleBuffer) {
-    if (skip >= chunk.length) {
-      skip -= chunk.length;
-      continue;
-    }
-    const slice = skip > 0 ? chunk.subarray(skip) : chunk;
-    skip = 0;
-    const n = Math.min(slice.length, take - written);
-    out.set(slice.subarray(0, n), written);
-    written += n;
-    if (written >= take) break;
-  }
-
-  return written ? out.subarray(0, written) : null;
-}
-
-function measureRms(samples) {
-  let sum = 0;
-  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-  return Math.sqrt(sum / Math.max(1, samples.length));
-}
-
-// Taglia il silenzio ai bordi: riduce le allucinazioni di inizio/fine chunk.
-// Restituisce anche l'offset in campioni, perché i timestamp di Whisper sono
-// relativi all'audio tagliato e vanno riallineati alla finestra originale.
-function trimSilence(samples) {
-  const threshold = 0.008; // ≈ −42 dB
-  let start = 0;
-  let end = samples.length - 1;
-  while (start < end && Math.abs(samples[start]) < threshold) start++;
-  while (end > start && Math.abs(samples[end]) < threshold) end--;
-
-  if (end - start < samples.length * 0.05) {
-    return { samples, offsetSamples: 0 };
-  }
-
-  const pad = Math.round((state.liveSampleRate || 16000) * 0.15);
-  start = Math.max(0, start - pad);
-  end = Math.min(samples.length - 1, end + pad);
-  return { samples: samples.subarray(start, end + 1), offsetSamples: start };
-}
-
-// Normalizza il chunk a −20 dBFS: Whisper riceve un livello costante,
-// senza dipendere dal pompaggio dell'AGC.
-function normalizeForWhisper(samples) {
-  const rms = measureRms(samples);
-  if (!isFinite(rms) || rms <= 1e-5) return null;
-
-  const target = Math.pow(10, -20 / 20);
-  const gain = Math.min(8, Math.max(0.5, target / rms));
-  const out = new Float32Array(samples.length);
-  for (let i = 0; i < samples.length; i++) {
-    out[i] = Math.max(-1, Math.min(1, samples[i] * gain));
-  }
-  return out;
 }
 
 // Unisce il risultato del chunk alla trascrizione live usando i timestamp:

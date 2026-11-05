@@ -309,7 +309,14 @@ function recoverFromBackup(recDir) {
   }
 
   removeDirIfExists(path.join(recDir, REVISIONS_DIR));
-  removeDirIfExists(path.join(recDir, '.tmp-whisper'));
+
+  // Staging interrotto: rimuove sia i nomi storici sia quelli con suffisso.
+  for (const entry of fs.readdirSync(recDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.tmp-whisper') || entry.name.startsWith('.tmp-revision-')) {
+      removeDirIfExists(path.join(recDir, entry.name));
+    }
+  }
 
   // Le copie derivate non fanno parte del formato v1.
   for (const name of ['transcript.edits.json']) {
