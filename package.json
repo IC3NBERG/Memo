@@ -9,6 +9,7 @@
     "build:dir": "electron-builder --mac --dir",
     "build-whisper": "bash scripts/build-whisper.sh",
     "benchmark-live": "node scripts/benchmark-live.mjs",
+    "verify-releases": "bash scripts/verify-releases.sh",
     "install:app": "cp -R dist/mac-arm64/Crunch.app /Applications/ && echo 'Crunch installata con successo in /Applications/Crunch.app!'",
     "postinstall": "electron-builder install-app-deps"
   },
