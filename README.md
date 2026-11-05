@@ -7,9 +7,9 @@ Crunch è un'applicazione desktop per macOS Apple Silicon che registra, trascriv
 [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-000000?logo=apple&logoColor=white)](#integrazione-con-apple)
 [![Engine](https://img.shields.io/badge/engine-whisper.cpp%20%2B%20Metal-2563EB)](#i-modelli-ai-scelta-e-funzionamento)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20locale-15803D)](#privacy-dati-e-sicurezza)
-[![Version](https://img.shields.io/badge/version-1.0.9-6B7280)](#)
+[![Version](https://img.shields.io/badge/version-1.1.0-6B7280)](#)
 
-> **Stato attuale: v1.0.9 — macOS (Apple Silicon).**
+> **Stato attuale: v1.1.0 — macOS (Apple Silicon).**
 > Windows e Linux sono nella roadmap e verranno supportati: vedi [Piattaforme e promessa cross-platform](#piattaforme-e-promessa-cross-platform).
 
 ---
@@ -107,17 +107,27 @@ Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — orga
 
 ## Stato del prodotto
 
-| Area | Disponibile nella v1.0.9 | In roadmap |
+| Area | Disponibile nella v1.1.0 | In roadmap |
 |---|---|---|
 | Registrazione locale | ✅ microfono, pausa/ripresa, WAV 16 kHz | doppia sorgente microfono + sistema |
 | Preprocessing audio | ✅ passa-alto, noise gate, compressore, AGC adattivo, limiter | preset per ambiente |
 | Trascrizione | ✅ live a finestra mobile (8 s, overlap 2 s) e completa al 100% | word-level timestamp persistiti |
 | Lingue | ✅ rilevamento automatico, traduzione in inglese con modello dedicato | selezione esplicita del modello |
-| Organizzazione | ✅ gruppi, rinomina, spostamento, anti-sovrascrittura | sezioni manuali, blocchi |
-| Consultazione | ✅ ricerca testuale, timestamp, player, copia, export | ricerca FTS5, seek dal timestamp |
+| Organizzazione | ✅ gruppi, rinomina, spostamento, anti-sovrascrittura; revisioni immutabili | sezioni manuali, blocchi |
+| Consultazione | ✅ ricerca testuale, timestamp cliccabili, player, copia, export | ricerca FTS5, evidenziazione del segmento attivo |
 | Gestione modelli | ✅ dormienti: download solo su richiesta, offline dopo il primo scaricamento | verifica integrità e aggiornamento modelli |
 | Intelligenza del contenuto | — | diarizzazione, speaker persistenti, highlight, sintesi citabile |
 | Piattaforme | ✅ macOS Apple Silicon | Windows, Linux |
+
+### Novità della v1.1.0
+
+- **Archivio a revisioni immutabili**: ogni trascrizione vive in `.revisions/rN/` con ID stabili per segmento. Una nuova trascrizione o traduzione crea una nuova revisione; le precedenti restano archiviate e consultabili.
+- **Editing non distruttivo**: testo corretto, segmenti nascosti, tag, annotazioni, ordine e gruppi stanno in un overlay separato (`edits.json`). La sorgente non viene mai riscritta; `sourceHash` segnala eventuali disallineamenti.
+- **Migrazione automatica v1 → v2**: le registrazioni esistenti vengono convertite alla prima apertura, con backup in `.backup-v1/` e `metadata.json` scritto per ultimo come commit marker. Se la migrazione si interrompe, l'app recupera dal backup. La conversione è one-way per l'app; il backup resta per un rollback manuale.
+- **Scritture atomiche e staging Whisper interno**: audio, metadata e revisioni non lasciano mai file parziali; whisper.cpp lavora in una staging temporanea dentro la registrazione.
+- **Timestamp coerenti con il dato**: i marcatori sono cliccabili e portano il player al secondo esatto. Sono disponibili solo per le revisioni con timing per segmento; per anteprime live e trascrizioni legacy il toggle viene disabilitato invece di mostrare valori finti.
+- **Download modelli più robusto**: redirect relativi, controllo della dimensione, cleanup dei file temporanei e blocco dei download concorrenti.
+- **Base di test e CI**: 58 test Node su migrazione, proiezione, revisioni, path guard, staging, download e DSP live; workflow GitHub Actions su Node 20 e 24.
 
 ### Novità della v1.0.9
 
@@ -262,23 +272,32 @@ Crunch adotta il modello a tre livelli di Electron, con isolamento rigoroso:
 ```text
 Crunch/
 ├── src/
+│   ├── core/                # logica pura, testabile senza Electron
+│   │   ├── library/         # creazione registrazioni, metadata atomico
+│   │   ├── models/          # download dei modelli con staging e redirect
+│   │   ├── schema/          # JSON Schema di metadata, transcript e edits
+│   │   ├── storage/         # scritture atomiche, path guard realpath
+│   │   └── transcript/      # revisioni, migrazione v1→v2, proiezione, whisper
 │   ├── main/
-│   │   ├── main.js        # processo principale: IPC, libreria, trascrizione, download modelli
-│   │   ├── preload.js     # bridge sicuro renderer ↔ main
-│   │   └── updater.js     # updater interno per build macOS non firmate (ZIP + SHA-512 + backup)
+│   │   ├── main.js          # processo principale: finestra, IPC, libreria, trascrizione
+│   │   ├── handlers.js      # handler IPC puri per recording:save e transcript:read/save
+│   │   ├── preload.js       # bridge sicuro renderer ↔ main
+│   │   └── updater.js       # updater interno per build macOS non firmate (ZIP + SHA-512 + backup)
 │   └── renderer/
-│       ├── index.html     # struttura UI e modali (guida, gruppi, conferme)
-│       ├── app.js         # stato, registrazione, pipeline audio, player, ricerca, export
-│       ├── style.css      # tema, layout, animazioni, waveform
-│       └── icons.js       # set di icone SVG inline
+│       ├── index.html       # struttura UI e modali (guida, gruppi, conferme)
+│       ├── app.js           # stato, registrazione, pipeline audio, player, ricerca, export
+│       ├── audio-dsp.js     # RMS, trim del silenzio, normalizzazione e finestra live
+│       ├── style.css        # tema, layout, animazioni, waveform
+│       └── icons.js         # set di icone SVG inline
+├── test/                    # 58 test Node (node:test) e fixture v1 sintetiche
 ├── scripts/
-│   ├── build-whisper.sh   # compila whisper.cpp con Metal per arm64 → bin/whisper-cli
-│   └── generate-icon.sh   # genera l'icona .icns
+│   ├── build-whisper.sh     # compila whisper.cpp con Metal per arm64 → bin/whisper-cli
+│   └── generate-icon.sh     # genera l'icona .icns
 ├── assets/
-│   ├── icons/icon.icns    # icona app
+│   ├── icons/icon.icns      # icona app
 │   └── entitlements.mac.plist
 ├── bin/
-│   └── whisper-cli        # binario nativo (incluso come extraResource nel pacchetto)
+│   └── whisper-cli          # binario nativo (incluso come extraResource nel pacchetto)
 ├── dist/                  # output di electron-builder (DMG, ZIP, .app)
 ├── package.json           # dipendenze, script di build, configurazione electron-builder
 ├── RELEASE_WORKFLOW.md    # procedura di release e aggiornamenti
@@ -298,16 +317,30 @@ Tutti i dati risiedono in `~/CrunchRecordings/`; le installazioni precedenti mig
 └── <Gruppo>/
     └── 2026-11-03_09-15-00_Diritto Privato/
         ├── audio.wav             # audio originale 16 kHz mono PCM 16 bit
-        ├── metadata.json         # nome, data, gruppo, durata, flag trascrizione
-        ├── transcript.json       # segmenti con start/end + testo completo
-        ├── transcript.txt        # testo semplice (ricerca, export rapido)
-        └── audio.json/.txt/.srt/.vtt/.csv   # output grezzi di whisper.cpp (se generati)
+        ├── metadata.json         # commit marker: activeRevisionId e indice revisioni
+        ├── .revisions/
+        │   ├── r1/
+        │   │   ├── transcript.json   # sorgente canonica della revisione
+        │   │   └── edits.json        # overlay: testo, nascosti, tag, ordine, gruppi
+        │   └── r2/                   # nuova trascrizione o traduzione
+        │       ├── transcript.json
+        │       └── edits.json
+        ├── transcript.json       # copia derivata della revisione attiva
+        ├── transcript.edits.json # copia derivata dell'overlay attivo
+        ├── transcript.txt        # testo effettivo (ricerca, export rapido)
+        └── .backup-v1/           # backup della migrazione, mai cancellato automaticamente
 ```
+
+Le copie nella root della registrazione sono di compatibilità e possono essere rigenerate: la fonte di verità è sempre `.revisions/rN/`. Una nuova trascrizione non sovrascrive la precedente, la archivia.
 
 ### Schema dei metadati
 
 ```json
 {
+  "schemaVersion": 2,
+  "id": "uuid",
+  "createdAt": "2026-11-03T09:15:00.000Z",
+  "updatedAt": "2026-11-03T10:02:00.000Z",
   "name": "Diritto Privato",
   "date": "2026-11-03T09:15:00.000Z",
   "folder": "Giurisprudenza",
@@ -315,23 +348,57 @@ Tutti i dati risiedono in `~/CrunchRecordings/`; le installazioni precedenti mig
   "hasTranscript": true,
   "isCompleteTranscript": true,
   "isLivePreview": false,
-  "isTranslated": false
+  "isTranslated": false,
+  "activeRevisionId": "r2",
+  "revisions": [
+    {
+      "revisionId": "r1",
+      "kind": "livePreview",
+      "createdAt": "2026-11-03T09:15:00.000Z",
+      "complete": false,
+      "translated": false,
+      "timing": "whole-recording"
+    },
+    {
+      "revisionId": "r2",
+      "kind": "transcription",
+      "createdAt": "2026-11-03T10:02:00.000Z",
+      "complete": true,
+      "translated": false,
+      "timing": "segment"
+    }
+  ],
+  "previewReplacedAt": "2026-11-03T10:02:00.000Z"
 }
 ```
+
+`metadata.json` è scritto per ultimo durante la migrazione: finché è v1, la registrazione è v1. `migrationWarnings` conserva eventuali anomalie trovate durante la conversione.
 
 ### Schema della trascrizione
 
 ```json
 {
+  "schemaVersion": 2,
+  "revisionId": "r2",
+  "kind": "transcription",
+  "source": {
+    "engine": "whisper-cli",
+    "model": "ggml-large-v3-turbo.bin",
+    "language": "it",
+    "targetLanguage": null,
+    "complete": true,
+    "translated": false,
+    "timing": "segment",
+    "format": "whisper-json"
+  },
   "segments": [
-    { "start": 0.0, "end": 4.32, "text": "Oggi parliamo della nozione di obbligazione." },
-    { "start": 4.32, "end": 9.81, "text": "La fonte può essere volontaria oppure legale." }
-  ],
-  "text": "Oggi parliamo della nozione di obbligazione. La fonte può essere volontaria oppure legale."
+    { "id": "r2-s0001", "start": 0.0, "end": 4.32, "text": "Oggi parliamo della nozione di obbligazione." },
+    { "id": "r2-s0002", "start": 4.32, "end": 9.81, "text": "La fonte può essere volontaria oppure legale." }
+  ]
 }
 ```
 
-Gli offset di whisper.cpp arrivano in millisecondi e vengono convertiti in secondi. Questo formato è già predisposto per citazioni, blocchi e seek.
+Gli offset di whisper.cpp arrivano in millisecondi e vengono convertiti in secondi una sola volta, nel revision store. Gli ID sono 1-based (`r2-s0001`) e restano stabili per la revisione: l'overlay li usa per riferirsi ai segmenti senza modificarli. Quando `timing` è `whole-recording` (anteprima live o trascrizione legacy) la UI non offre timestamp per segmento. Il contratto completo è in [`DATA_FORMAT.md`](DATA_FORMAT.md).
 
 ---
 
@@ -544,15 +611,15 @@ Legenda: ✅ disponibile · 🚧 da sviluppare · 🔭 esplorativo
 
 ### B. La trascrizione come dato strutturato
 
-#### 4. Trascrizione word/segment-level con timestamp 🚧
+#### 4. Trascrizione word/segment-level con timestamp ✅/🚧
 
 **Cosa.** Ogni frase — e in prospettiva ogni parola — collegata al minuto e al secondo esatto dell'audio.
 
 **Perché.** È il prerequisito di seek, citazioni, blocchi e sintesi selettiva.
 
-**Come.** whisper.cpp produce già segmenti con offset; il passo successivo è la granularità word-level (token timestamp) e un ID stabile per segmento o blocco, salvato in `transcript.json`.
+**Come.** I segmenti con `id`, `start` ed `end` sono implementati dalla v1.1.0 e restano stabili dentro la revisione. Il passo successivo è la granularità word-level (token timestamp) persistita accanto ai segmenti.
 
-**Criterio di accettazione.** Ogni segmento ha `id`, `start`, `end`; il clic su un timestamp porta il player a quel punto; gli ID sopravvivono a salvataggi e riaperture.
+**Criterio di accettazione.** Ogni segmento ha `id`, `start`, `end`; il clic su un timestamp porta il player a quel punto; gli ID sopravvivono a salvataggi e riaperture. Soddisfatto per i segmenti; resta la granularità parola.
 
 #### 5. Editor a blocchi non distruttivo 🚧
 
@@ -622,9 +689,9 @@ Legenda: ✅ disponibile · 🚧 da sviluppare · 🔭 esplorativo
 
 **Perché.** Consente la verifica immediata: la trascrizione diventa un indice dell'audio, non un riassunto separato.
 
-**Come.** Oggi i timestamp sono **visualizzati**; il passo successivo è renderli interattivi (`data-start` → `player.currentTime`), con evidenziazione del segmento in riproduzione e auto-scroll opzionale.
+**Come.** Dalla v1.1.0 i timestamp sono cliccabili e attivabili da tastiera: il player salta al secondo esatto. Restano l'evidenziazione del segmento in riproduzione e l'auto-scroll opzionale.
 
-**Criterio di accettazione.** Clic su un timestamp → il player salta al secondo esatto e riproduce; il segmento attivo è evidenziato.
+**Criterio di accettazione.** Clic su un timestamp → il player salta al secondo esatto e riproduce; il segmento attivo è evidenziato. Il seek è soddisfatto; l'evidenziazione è in roadmap.
 
 #### 12. Architettura Apple Silicon ✅
 
@@ -772,12 +839,12 @@ La configurazione scelta per l'app è **8 s con 2 s di overlap**: è la più acc
 
 | Canale | Tipo | Funzione |
 |---|---|---|
-| `recording:save` | invoke | salva WAV e metadata, con anti-collisione |
+| `recording:save` | invoke | salva WAV e metadata v2, con anti-collisione |
 | `recording:move` / `rename` / `delete` | invoke | gestione registrazioni |
-| `transcription:start` | send | trascrizione completa (con `--output-json`) |
+| `transcription:start` | send | trascrizione completa, pubblicata come nuova revisione |
 | `transcription:prewarm` | invoke | carica il modello live nel server persistente |
 | `transcription:chunk` | invoke | chunk PCM con timestamp, prompt e lingua bloccata |
-| `transcript:read` / `save` / `export` | invoke | lettura, salvataggio, export |
+| `transcript:read` / `save` / `export` | invoke | legge la revisione attiva, salva l'overlay, esporta |
 | `library:get` | invoke | ricostruisce la libreria dal filesystem |
 | `folder:create` / `rename` / `delete` | invoke | gestione gruppi |
 | `model:check` / `download` | invoke/send | modello ASR |
@@ -847,8 +914,8 @@ https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
 - **Nessuna diarizzazione**: non sono presenti etichette Speaker A/B.
 - **Nessun riconoscimento persistente** delle voci.
 - **Nessuna gestione delle sovrapposizioni**: il testo può risultare ambiguo quando due persone parlano insieme.
-- L'editor è **testuale** (`contenteditable`), non ancora a blocchi non distruttivi: modificare il testo può disallinearlo dai segmenti.
-- I **timestamp sono visualizzati ma non cliccabili**.
+- L'editor è **testuale** (`contenteditable`), non ancora a blocchi non distruttivi. La sorgente della revisione resta immutata: il testo riscritto finisce nell'overlay come `legacyDocumentText`, in attesa dell'editor a blocchi.
+- I **timestamp sono cliccabili solo per le revisioni con timing per segmento**; anteprime live e trascrizioni legacy mostrano il solo testo.
 - La ricerca è per sottostringa, **non ancora FTS5**.
 - **Nessuna cattura dell'audio di sistema**: è supportato solo il microfono.
 - **Nessuna sintesi automatica** e nessun highlight.
