@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crunch.app/schema/transcript-v2.json",
+  "title": "Crunch transcript source revision",
+  "type": "object",
+  "required": ["schemaVersion", "revisionId", "kind", "source", "segments"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "revisionId": { "type": "string", "pattern": "^r[1-9][0-9]*$" },
+    "kind": { "enum": ["transcription", "translation", "livePreview"] },
+    "source": {
+      "type": "object",
+      "required": ["engine", "model", "language", "targetLanguage", "complete", "translated", "timing"],
+      "properties": {
+        "engine": { "type": ["string", "null"] },
+        "model": { "type": ["string", "null"] },
+        "language": { "type": ["string", "null"] },
+        "targetLanguage": { "type": ["string", "null"] },
+        "complete": { "type": "boolean" },
+        "translated": { "type": "boolean" },
+        "timing": { "enum": ["segment", "whole-recording"] },
+        "format": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "start", "end", "text"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^r[1-9][0-9]*-s[0-9]{4,}$" },
+          "start": { "type": "number", "minimum": 0 },
+          "end": { "type": "number", "minimum": 0 },
+          "text": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

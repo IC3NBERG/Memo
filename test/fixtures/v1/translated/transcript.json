@@ -1,0 +1,7 @@
+{
+  "segments": [
+    { "start": 0, "end": 20.5, "text": "This is the English translation." },
+    { "start": 20.5, "end": 42, "text": "It has two segments." }
+  ],
+  "text": "This is the English translation. It has two segments."
+}

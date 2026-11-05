@@ -5,6 +5,8 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "test:unit": "node --test test/*.test.js",
     "build": "electron-builder --mac",
     "build:dir": "electron-builder --mac --dir",
     "build-whisper": "bash scripts/build-whisper.sh",

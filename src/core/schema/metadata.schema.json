@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crunch.app/schema/metadata-v2.json",
+  "title": "Crunch recording metadata",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "createdAt",
+    "updatedAt",
+    "name",
+    "duration",
+    "hasTranscript",
+    "isCompleteTranscript",
+    "isLivePreview",
+    "isTranslated",
+    "activeRevisionId",
+    "revisions",
+    "previewReplacedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "id": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "name": { "type": "string" },
+    "date": { "type": ["string", "null"] },
+    "folder": { "type": ["string", "null"] },
+    "duration": { "type": "number", "minimum": 0 },
+    "hasTranscript": { "type": "boolean" },
+    "isCompleteTranscript": { "type": "boolean" },
+    "isLivePreview": { "type": "boolean" },
+    "isTranslated": { "type": "boolean" },
+    "activeRevisionId": {
+      "type": ["string", "null"],
+      "pattern": "^r[1-9][0-9]*$"
+    },
+    "revisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["revisionId", "kind", "createdAt", "complete", "translated", "timing"],
+        "properties": {
+          "revisionId": { "type": "string", "pattern": "^r[1-9][0-9]*$" },
+          "kind": { "enum": ["transcription", "translation", "livePreview"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "complete": { "type": "boolean" },
+          "translated": { "type": "boolean" },
+          "model": { "type": ["string", "null"] },
+          "language": { "type": ["string", "null"] },
+          "targetLanguage": { "type": ["string", "null"] },
+          "timing": { "enum": ["segment", "whole-recording"] }
+        },
+        "additionalProperties": true
+      }
+    },
+    "previewReplacedAt": { "type": ["string", "null"] },
+    "migrationWarnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

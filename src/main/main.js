@@ -9,13 +9,31 @@ const http = require('http');
 const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const manualUpdater = require('./updater');
+const { createPathGuard, isSafeFolderName } = require('../core/storage/path-guard');
+const transcriptStore = require('../core/transcript/store');
+const {
+  createRecordingSaveHandler,
+  createTranscriptReadHandler,
+  createTranscriptSaveHandler,
+} = require('./handlers');
+const {
+  buildWhisperArgs,
+  cleanupStaging,
+  createWhisperStaging,
+  publishWhisperOutput,
+  whisperOutputPrefix,
+} = require('../core/transcript/whisper');
 
 // ─── Percorsi principali ───────────────────────────────────────────────────
 const OLD_MEMO_DIR = path.join(os.homedir(), 'MemoRecordings');
-const RECORDINGS_DIR = path.join(os.homedir(), 'CrunchRecordings');
+const RECORDINGS_DIR = process.env.CRUNCH_RECORDINGS_DIR
+  ? path.resolve(process.env.CRUNCH_RECORDINGS_DIR)
+  : path.join(os.homedir(), 'CrunchRecordings');
 
 // Se esiste MemoRecordings ma non ancora CrunchRecordings, migra subito senza riscaricare il modello!
-if (fs.existsSync(OLD_MEMO_DIR) && !fs.existsSync(RECORDINGS_DIR)) {
+if (!process.env.CRUNCH_RECORDINGS_DIR
+    && fs.existsSync(OLD_MEMO_DIR)
+    && !fs.existsSync(RECORDINGS_DIR)) {
   try {
     fs.renameSync(OLD_MEMO_DIR, RECORDINGS_DIR);
   } catch (_) {}
@@ -68,26 +86,10 @@ function getWhisperServerPath() {
 
 // ─── Validazione percorsi IPC ──────────────────────────────────────────────
 // Il renderer non deve poter leggere/scrivere/eliminare percorsi arbitrari.
-function isPathInsideRecordings(targetPath) {
-  if (!targetPath || typeof targetPath !== 'string') return false;
-  const resolved = path.resolve(targetPath);
-  const root = path.resolve(RECORDINGS_DIR);
-  return resolved.startsWith(root + path.sep);
-}
-
-function isSafeFolderName(name) {
-  return typeof name === 'string'
-    && name.length > 0
-    && name.length <= 80
-    && name !== '.'
-    && name !== '..'
-    && !name.startsWith('.')
-    && !name.includes('/')
-    && !name.includes('\\');
-}
+const recordingsPathGuard = createPathGuard(RECORDINGS_DIR);
 
 function isValidRecordingDir(recDir) {
-  return isPathInsideRecordings(recDir) && fs.existsSync(recDir);
+  return recordingsPathGuard.isValidRecordingDir(recDir);
 }
 
 // ─── Crea directory necessarie ─────────────────────────────────────────────
@@ -472,52 +474,12 @@ ipcMain.on('model:download-translation', (event) => {
 });
 
 // ─── IPC: Salva audio WAV (Anti-sovrascrittura garantita) ───────────────────
-ipcMain.handle('recording:save', async (event, { buffer, folder, name }) => {
-  try {
-    if (folder && !isSafeFolderName(folder)) {
-      return { success: false, error: 'Gruppo non valido' };
-    }
-
-    const date = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-    const timeStr = `${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
-    const safeName = (name || 'Lezione').replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim() || 'Lezione';
-
-    const baseDir = folder ? path.join(RECORDINGS_DIR, folder) : UNSORTED_DIR;
-    if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
-
-    let recDirName = `${dateStr}_${timeStr}_${safeName}`;
-    let recDir = path.join(baseDir, recDirName);
-
-    // Se esiste già una cartella identica, aggiungi progressivo
-    let counter = 1;
-    while (fs.existsSync(recDir)) {
-      recDirName = `${dateStr}_${timeStr}_${safeName}_${counter}`;
-      recDir = path.join(baseDir, recDirName);
-      counter++;
-    }
-
-    fs.mkdirSync(recDir, { recursive: true });
-
-    const audioPath = path.join(recDir, 'audio.wav');
-    fs.writeFileSync(audioPath, Buffer.from(buffer));
-
-    const metadata = {
-      name: safeName,
-      date: date.toISOString(),
-      folder: folder || null,
-      duration: 0,
-      hasTranscript: false,
-      isCompleteTranscript: false,
-    };
-    fs.writeFileSync(path.join(recDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
-
-    return { success: true, recDir, audioPath };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
+const handleRecordingSave = createRecordingSaveHandler({
+  recordingsDir: RECORDINGS_DIR,
+  unsortedDir: UNSORTED_DIR,
 });
+
+ipcMain.handle('recording:save', async (event, payload) => handleRecordingSave(payload));
 
 // ─── IPC: Aggiorna durata registrazione ───────────────────────────────────
 ipcMain.handle('recording:update-duration', (event, { recDir, duration }) => {
@@ -546,9 +508,13 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
     return;
   }
 
-  if (!isValidRecordingDir(recDir) ||
-      !audioPath ||
-      !path.resolve(audioPath).startsWith(path.resolve(recDir) + path.sep)) {
+  const normalizedRecDir = recordingsPathGuard.normalize(recDir);
+  const normalizedAudioPath = audioPath ? recordingsPathGuard.normalize(audioPath) : null;
+  const audioInsideRecDir = normalizedRecDir
+    && normalizedAudioPath
+    && normalizedAudioPath.startsWith(normalizedRecDir + path.sep);
+
+  if (!isValidRecordingDir(recDir) || !audioInsideRecDir) {
     event.sender.send('transcription:error', 'Percorso audio non valido.');
     return;
   }
@@ -574,34 +540,35 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
     return;
   }
 
-  const audioBasename = path.basename(audioPath, path.extname(audioPath));
-  const outputPrefix = path.join(recDir, audioBasename);
+  // Whisper lavora in una staging nella stessa filesystem della registrazione:
+  // il rename verso .revisions/rN/ è atomico e non lascia output parziali.
+  let stagingDir;
+  try {
+    stagingDir = createWhisperStaging(recDir);
+  } catch (err) {
+    event.sender.send('transcription:error', err.message);
+    return;
+  }
+  const outputPrefix = whisperOutputPrefix(stagingDir);
 
-  // Rimuovi vecchi file per evitare che letture residue sporchino la traduzione/ritrascrizione
-  ['.json', '.txt', '.srt', '.vtt', '.csv'].forEach(ext => {
-    try {
-      const f = outputPrefix + ext;
-      if (fs.existsSync(f)) fs.unlinkSync(f);
-    } catch (_) {}
+  const cleanupStagingDir = () => cleanupStaging(stagingDir);
+
+  const args = buildWhisperArgs({
+    modelPath: currentModelPath,
+    outputPrefix,
+    audioPath,
+    language,
+    translate: isTranslate,
   });
 
-  // Argomenti per whisper-cli nativo Metal
-  const args = [
-    '--model', currentModelPath,
-    '--output-file', outputPrefix,
-    '--output-json',
-    '--output-txt',
-    '--print-progress',
-    '--file', audioPath,
-    '--threads', '4',
-    '--language', language || 'auto',
-  ];
-
-  if (translate) {
-    args.push('--translate');
+  let proc;
+  try {
+    proc = spawn(whisperBin, args);
+  } catch (err) {
+    cleanupStagingDir();
+    event.sender.send('transcription:error', err.message);
+    return;
   }
-
-  const proc = spawn(whisperBin, args);
   activeTranscription = proc;
 
   const handleOutput = (data) => {
@@ -624,55 +591,40 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
   proc.on('close', (code) => {
     activeTranscription = null;
     if (code !== 0) {
+      cleanupStagingDir();
       event.sender.send('transcription:error', `whisper-cli terminato con errore (codice ${code})`);
       return;
     }
 
     try {
-      const jsonPath = outputPrefix + '.json';
-      const txtPath = outputPrefix + '.txt';
+      const result = publishWhisperOutput(recDir, stagingDir, {
+        model: path.basename(currentModelPath),
+        language,
+        translate: isTranslate,
+        store: transcriptStore,
+      });
 
-      let transcript = { segments: [], text: '' };
+      cleanupStagingDir();
 
-      if (fs.existsSync(jsonPath)) {
-        const raw = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-        transcript.segments = (raw.transcription || []).map(seg => ({
-          start: seg.offsets ? (seg.offsets.from / 1000) : 0,
-          end: seg.offsets ? (seg.offsets.to / 1000) : 0,
-          text: (seg.text || '').trim(),
-        }));
-        transcript.text = transcript.segments.map(s => s.text).join(' ').trim();
-      } else if (fs.existsSync(txtPath)) {
-        transcript.text = fs.readFileSync(txtPath, 'utf8').trim();
-      }
-
-      // Salva copie canoniche
-      fs.writeFileSync(path.join(recDir, 'transcript.json'), JSON.stringify(transcript, null, 2));
-      fs.writeFileSync(path.join(recDir, 'transcript.txt'), transcript.text);
-
-      // Aggiorna metadata con flag di trascrizione COMPLETA al 100%
-      const metaPath = path.join(recDir, 'metadata.json');
-      if (fs.existsSync(metaPath)) {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-        meta.hasTranscript = true;
-        meta.isCompleteTranscript = true;
-        meta.isLivePreview = false;
-        meta.isTranslated = !!translate;
-        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+      if (!result.success) {
+        event.sender.send('transcription:error', result.error || 'Trascrizione vuota');
+        return;
       }
 
       event.sender.send('transcription:done', {
         recDir,
-        transcript,
+        transcript: result.transcript,
         translate: !!translate,
       });
     } catch (err) {
+      cleanupStagingDir();
       event.sender.send('transcription:error', err.message);
     }
   });
 
   proc.on('error', (err) => {
     activeTranscription = null;
+    cleanupStagingDir();
     event.sender.send('transcription:error', err.message);
   });
 });
@@ -1257,51 +1209,18 @@ ipcMain.handle('recording:delete', (event, { recDir }) => {
 });
 
 // ─── IPC: Leggi trascrizione ───────────────────────────────────────────────
-ipcMain.handle('transcript:read', (event, { recDir }) => {
-  try {
-    if (!isValidRecordingDir(recDir)) {
-      return { success: false, error: 'Registrazione non valida' };
-    }
-    const jsonPath = path.join(recDir, 'transcript.json');
-    if (fs.existsSync(jsonPath)) {
-      return { success: true, transcript: JSON.parse(fs.readFileSync(jsonPath, 'utf8')) };
-    }
-    return { success: false, error: 'Nessuna trascrizione' };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
+const handleTranscriptRead = createTranscriptReadHandler({
+  pathGuard: recordingsPathGuard,
+  store: transcriptStore,
 });
+ipcMain.handle('transcript:read', (event, payload) => handleTranscriptRead(payload));
 
 // ─── IPC: Salva trascrizione editata ──────────────────────────────────────
-ipcMain.handle('transcript:save', (event, { recDir, transcript, isLivePreview, isTranslated }) => {
-  try {
-    if (!isValidRecordingDir(recDir)) {
-      return { success: false, error: 'Registrazione non valida' };
-    }
-    fs.writeFileSync(path.join(recDir, 'transcript.json'), JSON.stringify(transcript, null, 2));
-    fs.writeFileSync(path.join(recDir, 'transcript.txt'), transcript.text || '');
-
-    // Allinea i flag del metadata: senza questo, un'anteprima live
-    // scomparirebbe dalla libreria al riavvio dell'app.
-    const metaPath = path.join(recDir, 'metadata.json');
-    if (fs.existsSync(metaPath)) {
-      try {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-        meta.hasTranscript = true;
-        if (isLivePreview === true) {
-          meta.isLivePreview = true;
-          meta.isCompleteTranscript = false;
-          if (typeof isTranslated === 'boolean') meta.isTranslated = isTranslated;
-        }
-        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-      } catch (_) {}
-    }
-
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
+const handleTranscriptSave = createTranscriptSaveHandler({
+  pathGuard: recordingsPathGuard,
+  store: transcriptStore,
 });
+ipcMain.handle('transcript:save', (event, payload) => handleTranscriptSave(payload));
 
 // ─── IPC: Export ──────────────────────────────────────────────────────────
 ipcMain.handle('transcript:export', async (event, { recDir, format, text }) => {

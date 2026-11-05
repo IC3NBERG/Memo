@@ -1,0 +1,7 @@
+{
+  "segments": [
+    { "start": 0, "end": 6, "text": "Testo originale primo." },
+    { "start": 6, "end": 12, "text": "Testo originale secondo." }
+  ],
+  "text": "Testo modificato dall'utente."
+}
