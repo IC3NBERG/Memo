@@ -114,6 +114,7 @@ const state = {
   modelDownloading: false,
   modelDownloadWaiters: [],
   showTimestamps: false,
+  timestampsPreferred: false,
   playerAudio: document.getElementById('hidden-audio'),
 
   // Trascrizione / traduzione
@@ -1473,6 +1474,7 @@ function setupTranscriptControls() {
 
   UI.toggleTimestamps?.addEventListener('change', () => {
     state.showTimestamps = UI.toggleTimestamps.checked;
+    state.timestampsPreferred = state.showTimestamps;
     renderTranscript();
   });
 
@@ -1525,6 +1527,7 @@ function setupTranscriptControls() {
       state.activeRec.isTranslated = isTranslate;
 
       updateTranscriptStatusBadge();
+      syncTimestampsToggle(transcript);
       renderTranscript();
     }
 
@@ -1837,8 +1840,9 @@ function renderTranscript() {
   if (!state.transcript) return;
 
   const { segments, text } = state.transcript;
+  const canShowTimestamps = state.showTimestamps && transcriptSupportsTimestamps(state.transcript);
 
-  if (!state.showTimestamps || !segments || segments.length === 0) {
+  if (!canShowTimestamps || !segments || segments.length === 0) {
     UI.timestampsMargin.classList.remove('visible');
     UI.timestampsMargin.innerHTML = '';
     UI.transcriptContent.textContent = text || '';
@@ -1851,6 +1855,17 @@ function renderTranscript() {
       const tsEl = document.createElement('span');
       tsEl.className = 'ts-mark';
       tsEl.textContent = formatTime(seg.start);
+      tsEl.title = `Vai a ${formatTime(seg.start)}`;
+      tsEl.setAttribute('role', 'button');
+      tsEl.tabIndex = 0;
+      const seek = () => seekPlayerTo(seg.start);
+      tsEl.addEventListener('click', seek);
+      tsEl.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          seek();
+        }
+      });
       UI.timestampsMargin.appendChild(tsEl);
 
       const span = document.createElement('span');
@@ -1860,6 +1875,49 @@ function renderTranscript() {
       UI.transcriptContent.appendChild(span);
     });
   }
+}
+
+/**
+ * I timestamp per segmento esistono solo se la revisione ha timing "segment".
+ * Per anteprime live e trascrizioni legacy c'è solo la durata complessiva:
+ * il toggle va disabilitato, non mostrato con valori finti.
+ */
+function transcriptSupportsTimestamps(transcript) {
+  return !!transcript
+    && transcript.timing === 'segment'
+    && Array.isArray(transcript.segments)
+    && transcript.segments.length > 0
+    && !transcript.legacyDocumentText;
+}
+
+function syncTimestampsToggle(transcript) {
+  const toggle = UI.toggleTimestamps;
+  if (!toggle) return;
+
+  const supported = transcriptSupportsTimestamps(transcript);
+  const wrapper = toggle.closest('.toggle-wrap');
+  toggle.disabled = !supported;
+  wrapper?.classList.toggle('is-disabled', !supported);
+  if (wrapper) {
+    wrapper.title = supported
+      ? 'Mostra o nascondi i marcatori temporali'
+      : 'Timestamp non disponibili: per questa trascrizione è nota solo la durata complessiva';
+  }
+
+  if (!supported) {
+    toggle.checked = false;
+    state.showTimestamps = false;
+  } else {
+    toggle.checked = !!state.timestampsPreferred;
+    state.showTimestamps = toggle.checked;
+  }
+}
+
+function seekPlayerTo(seconds) {
+  const audio = state.playerAudio;
+  if (!audio || !audio.src || !Number.isFinite(seconds)) return;
+  const max = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null;
+  audio.currentTime = max ? Math.min(Math.max(0, seconds), max) : Math.max(0, seconds);
 }
 
 async function saveTranscript() {
@@ -2187,7 +2245,10 @@ async function openRecording(rec, folderName) {
 
   if (result.success && result.transcript) {
     state.transcript = result.transcript;
+    syncTimestampsToggle(result.transcript);
     renderTranscript();
+  } else {
+    syncTimestampsToggle(null);
   }
 
   // Aggiorna badge e pulsante di trascrizione

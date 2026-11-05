@@ -1593,6 +1593,20 @@ input, select, textarea { font-family: var(--font); }
   padding-right: 6px;
   font-variant-numeric: tabular-nums;
 }
+#timestamps-margin.visible .ts-mark {
+  pointer-events: auto;
+  cursor: pointer;
+}
+#timestamps-margin.visible .ts-mark:hover,
+#timestamps-margin.visible .ts-mark:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  outline: none;
+}
+.toggle-wrap.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 #transcript-content {
   flex: 1;
