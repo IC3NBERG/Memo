@@ -4,11 +4,10 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const https = require('https');
-const http = require('http');
 const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const manualUpdater = require('./updater');
+const { downloadModelFile } = require('../core/models/download');
 const { createPathGuard, isSafeFolderName } = require('../core/storage/path-guard');
 const transcriptStore = require('../core/transcript/store');
 const { readMetadataFile, updateMetadataFile } = require('../core/library/metadata');
@@ -365,80 +364,8 @@ ipcMain.handle('model:check-translation', () => {
 });
 
 // ─── Download modello generico (riutilizzato per trascrizione e traduzione) ─
-const activeModelDownloads = new Set();
-
-function downloadModelFile({ url, targetPath, onProgress, onDone, onError }) {
-  // Evita download concorrenti dello stesso modello (stesso file temporaneo).
-  if (activeModelDownloads.has(targetPath)) return;
-  activeModelDownloads.add(targetPath);
-
-  const tmpPath = targetPath + '.tmp';
-  const finish = (cb) => {
-    activeModelDownloads.delete(targetPath);
-    cb();
-  };
-  const fail = (message) => finish(() => onError(message));
-  const succeed = () => finish(onDone);
-
-  function startDownload(currentUrl, redirectCount = 0) {
-    if (redirectCount > 10) {
-      fail('Troppi redirect');
-      return;
-    }
-
-    const proto = currentUrl.startsWith('https') ? https : http;
-
-    const req = proto.get(currentUrl, (res) => {
-      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
-        const location = res.headers['location'];
-        res.destroy();
-        startDownload(location, redirectCount + 1);
-        return;
-      }
-
-      if (res.statusCode !== 200) {
-        fail(`HTTP ${res.statusCode}`);
-        return;
-      }
-
-      const totalSize = parseInt(res.headers['content-length'] || '0', 10);
-      let downloaded = 0;
-
-      const file = fs.createWriteStream(tmpPath);
-      res.pipe(file);
-
-      res.on('data', (chunk) => {
-        downloaded += chunk.length;
-        if (totalSize > 0) {
-          const pct = Math.round((downloaded / totalSize) * 100);
-          onProgress({ downloaded, total: totalSize, percent: pct });
-        }
-      });
-
-      file.on('finish', () => {
-        file.close(() => {
-          try {
-            fs.renameSync(tmpPath, targetPath);
-            succeed();
-          } catch (e) {
-            fail(e.message);
-          }
-        });
-      });
-
-      file.on('error', (err) => {
-        fs.unlink(tmpPath, () => {});
-        fail(err.message);
-      });
-    });
-
-    req.on('error', (err) => {
-      fail(err.message);
-    });
-  }
-
-  startDownload(url);
-}
+// L'implementazione vive in core/models/download.js: main.js si limita a
+// inoltrare gli eventi IPC.
 
 // ─── IPC: Download modello trascrizione ────────────────────────────────────
 ipcMain.on('model:download', (event) => {
