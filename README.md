@@ -43,7 +43,7 @@ Crunch nasce per due pubblici che condividono lo stesso problema: **non perdere 
 | **Studente universitario** | seguire una lezione di 1–2 ore, ritrovare un passaggio, preparare l'esame | trascrizione completa, timestamp, gruppi per materia, export Markdown da integrare negli appunti |
 | **Professionista** | documentare una riunione, un'intervista o una formazione senza trascrivere a mano | registrazione e trascrizione locali, ricerca nel testo, export TXT/Markdown per verbali e note operative |
 | **Consulente / formatore** | conservare ore di contenuti e citarli con precisione | archivio portabile, trascrizioni con segmenti temporali, nessun upload a servizi terzi |
-| **Team e ricerca** | costruire una base di conoscenza verificabile e riservata | storage locale, struttura a gruppi, dati in formati aperti; in roadmap ricerca full-text, sintesi con citazioni e diarizzazione |
+| **Team e ricerca** | costruire una base di conoscenza verificabile e riservata | storage locale, struttura a gruppi, ricerca full-text FTS5, editor a blocchi, dati in formati aperti; in roadmap sintesi con citazioni e diarizzazione |
 
 ### Valore per lo studente
 
@@ -58,7 +58,7 @@ Crunch nasce per due pubblici che condividono lo stesso problema: **non perdere 
 - **Riservatezza.** Audio, nomi dei gruppi e contenuti restano sul dispositivo, requisito essenziale per clienti, HR, legale e ricerca.
 - **Portabilità.** L'archivio è composto da cartelle e file standard: nessun lock-in applicativo.
 
-> **Nota di trasparenza.** Le capacità di editing strutturato, diarizzazione e sintesi sono in roadmap e sono indicate come tali nel documento. Crunch non presenta come disponibili funzioni non ancora implementate.
+> **Nota di trasparenza.** Le capacità di editing strutturato e ricerca full-text sono disponibili nella v1.1.0; diarizzazione e sintesi restano in roadmap e sono indicate come tali nel documento. Crunch non presenta come disponibili funzioni non ancora implementate.
 
 ---
 
@@ -95,7 +95,7 @@ Crunch vuole essere un **quaderno operativo locale e verificabile**: ogni parola
 Registra → Trascrive → Separa le voci → Struttura in blocchi → Cerca e riascolta → Riassume con citazioni → Esporta
 ```
 
-Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — organizzazione per gruppi, ricerca testuale, timestamp, riproduzione ed esportazione. I passaggi successivi (diarizzazione, editor a blocchi, sintesi citabile, ricerca full-text, doppia sorgente audio) sono descritti nella [roadmap](#roadmap-i-prossimi-punti-da-sviluppare).
+Oggi Crunch copre in modo solido i primi due passaggi e buona parte del terzo — organizzazione per gruppi, editor a blocchi non distruttivo, ricerca full-text FTS5, timestamp, riproduzione ed esportazione. I passaggi successivi (diarizzazione, sintesi citabile, sezioni manuali, doppia sorgente audio) sono descritti nella [roadmap](#roadmap-i-prossimi-punti-da-sviluppare).
 
 ### Non-obiettivi
 
@@ -113,8 +113,9 @@ Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — orga
 | Preprocessing audio | ✅ passa-alto, noise gate, compressore, AGC adattivo, limiter | preset per ambiente |
 | Trascrizione | ✅ live a finestra mobile (8 s, overlap 2 s) e completa al 100% | word-level timestamp persistiti |
 | Lingue | ✅ rilevamento automatico, traduzione in inglese con modello dedicato | selezione esplicita del modello |
-| Organizzazione | ✅ gruppi, rinomina, spostamento, anti-sovrascrittura; revisioni immutabili | sezioni manuali, blocchi |
-| Consultazione | ✅ ricerca testuale, timestamp cliccabili, player, copia, export | ricerca FTS5, evidenziazione del segmento attivo |
+| Organizzazione | ✅ gruppi, rinomina, spostamento, anti-sovrascrittura; revisioni immutabili | sezioni manuali |
+| Consultazione | ✅ ricerca full-text FTS5 con snippet, timestamp cliccabili, player, copia, export | evidenziazione del segmento attivo, filtri per data |
+| Editing | ✅ editor a blocchi non distruttivo: testo, nascondi, tag, annotazioni, ordine, gruppi, undo/redo | drag & drop, sezioni manuali |
 | Gestione modelli | ✅ dormienti: download solo su richiesta, offline dopo il primo scaricamento | verifica integrità e aggiornamento modelli |
 | Intelligenza del contenuto | — | diarizzazione, speaker persistenti, highlight, sintesi citabile |
 | Piattaforme | ✅ macOS Apple Silicon | Windows, Linux |
@@ -123,11 +124,14 @@ Oggi Crunch copre in modo solido i primi due passaggi e parte del terzo — orga
 
 - **Archivio a revisioni immutabili**: ogni trascrizione vive in `.revisions/rN/` con ID stabili per segmento. Una nuova trascrizione o traduzione crea una nuova revisione; le precedenti restano archiviate e consultabili.
 - **Editing non distruttivo**: testo corretto, segmenti nascosti, tag, annotazioni, ordine e gruppi stanno in un overlay separato (`edits.json`). La sorgente non viene mai riscritta; `sourceHash` segnala eventuali disallineamenti.
+- **Editor a blocchi**: ogni segmento immutabile della revisione diventa un blocco modificabile. Puoi correggere il testo, nascondere blocchi, applicare tag, aggiungere annotazioni, riordinare e raggruppare; undo/redo restano nella sessione, l'autosalvataggio è ottimistico e un overlay disallineato si apre in sola lettura.
+- **Ricerca full-text FTS5**: indice SQLite ricostruibile che cerca nel testo effettivo, nel nome e nel gruppo, con tokenizzazione accent-insensitive, prefisso sull'ultima parola e snippet evidenziati nella sidebar. L'indice non è mai fonte di verità: si aggiorna su salvataggio, rinomina, spostamento ed eliminazione, e si ricostruisce in automatico.
+- **Interfaccia delle revisioni**: barra con selettore della revisione attiva, tipo, completezza e timing; il cambio revisione non riscrive le sorgenti. La UI distingue `stale`/`invalid` e propone ricarica, conversione o ripristino del testo legacy.
 - **Migrazione automatica v1 → v2**: le registrazioni esistenti vengono convertite alla prima apertura, con backup in `.backup-v1/` e `metadata.json` scritto per ultimo come commit marker. Se la migrazione si interrompe, l'app recupera dal backup. La conversione è one-way per l'app; il backup resta per un rollback manuale.
 - **Scritture atomiche e staging Whisper interno**: audio, metadata e revisioni non lasciano mai file parziali; whisper.cpp lavora in una staging temporanea dentro la registrazione.
 - **Timestamp coerenti con il dato**: i marcatori sono cliccabili e portano il player al secondo esatto. Sono disponibili solo per le revisioni con timing per segmento; per anteprime live e trascrizioni legacy il toggle viene disabilitato invece di mostrare valori finti.
 - **Download modelli più robusto**: redirect relativi, controllo della dimensione, cleanup dei file temporanei e blocco dei download concorrenti.
-- **Base di test e CI**: 58 test Node su migrazione, proiezione, revisioni, path guard, staging, download e DSP live; workflow GitHub Actions su Node 20 e 24.
+- **Base di test e CI**: 80 test Node su migrazione, proiezione, revisioni, overlay a blocchi, ricerca FTS5, path guard, staging, download e DSP live. Un solo modulo nativo compilato per l'ABI di Electron: `npm test` salta i 6 test SQLite quando l'ABI non combacia, `npm run test:electron` li esegue tutti. Workflow GitHub Actions su Node 20 e 24.
 
 ### Novità della v1.0.9
 
@@ -233,10 +237,11 @@ La libreria viene ricostruita leggendo il filesystem, che è la fonte di verità
 ### 5. Consultazione
 
 - **Gruppi** (materie, progetti, clienti) con creazione, rinomina ed eliminazione sicura: eliminare un gruppo **non elimina** le registrazioni, le sposta in `_unsorted`.
-- **Ricerca** nella sidebar su nome e testo della trascrizione (sottostringa, case-insensitive).
+- **Ricerca** full-text nella sidebar tramite indice FTS5: cerca nel testo effettivo della revisione attiva (override inclusi), nel nome e nel gruppo. Supporta prefissi sull'ultima parola, ignora gli accenti e mostra uno snippet evidenziato. Se l'indice non è disponibile, resta attivo il filtro in memoria su nome e testo.
+- **Editor a blocchi** non distruttivo: correzione del testo per segmento, blocchi nascosti, tag, annotazioni, ordine e gruppi. Undo/redo nella sessione, autosalvataggio con controllo di concorrenza, banner di sola lettura se l'overlay non è più allineato alla sorgente.
 - **Timestamp** attivabili e disattivabili accanto ai segmenti.
 - **Player** integrato con seek, volume e tempo corrente.
-- **Copia** dell'intero transcript ed **export** `.txt` o `.md`.
+- **Copia** dell'intero transcript ed **export** `.txt` o `.md`, sempre dalla proiezione effettiva.
 - **Rinomina** della registrazione con doppio clic.
 
 ---
@@ -276,22 +281,25 @@ Crunch/
 │   │   ├── library/         # creazione registrazioni, metadata atomico
 │   │   ├── models/          # download dei modelli con staging e redirect
 │   │   ├── schema/          # JSON Schema di metadata, transcript e edits
+│   │   ├── search/          # indice SQLite FTS5, query sanitizer, indexer
 │   │   ├── storage/         # scritture atomiche, path guard realpath
 │   │   └── transcript/      # revisioni, migrazione v1→v2, proiezione, whisper
 │   ├── main/
-│   │   ├── main.js          # processo principale: finestra, IPC, libreria, trascrizione
-│   │   ├── handlers.js      # handler IPC puri per recording:save e transcript:read/save
+│   │   ├── main.js          # processo principale: finestra, IPC, libreria, trascrizione, indice
+│   │   ├── handlers.js      # handler IPC puri per recording, transcript, revisioni, edits e search
 │   │   ├── preload.js       # bridge sicuro renderer ↔ main
 │   │   └── updater.js       # updater interno per build macOS non firmate (ZIP + SHA-512 + backup)
 │   └── renderer/
 │       ├── index.html       # struttura UI e modali (guida, gruppi, conferme)
-│       ├── app.js           # stato, registrazione, pipeline audio, player, ricerca, export
+│       ├── app.js           # stato, registrazione, pipeline audio, player, ricerca, revisioni, export
+│       ├── block-model.js   # operazioni pure dell'editor a blocchi (overlay, undo/redo)
 │       ├── audio-dsp.js     # RMS, trim del silenzio, normalizzazione e finestra live
-│       ├── style.css        # tema, layout, animazioni, waveform
+│       ├── style.css        # tema, layout, animazioni, waveform, editor e snippet
 │       └── icons.js         # set di icone SVG inline
-├── test/                    # 58 test Node (node:test) e fixture v1 sintetiche
+├── test/                    # 80 test Node (node:test) e fixture v1 sintetiche
 ├── scripts/
 │   ├── build-whisper.sh     # compila whisper.cpp con Metal per arm64 → bin/whisper-cli
+│   ├── rebuild-native.sh    # ricompila better-sqlite3 per l'ABI di Electron
 │   └── generate-icon.sh     # genera l'icona .icns
 ├── assets/
 │   ├── icons/icon.icns      # icona app
@@ -313,6 +321,8 @@ Tutti i dati risiedono in `~/CrunchRecordings/`; le installazioni precedenti mig
 ├── .models/
 │   ├── ggml-large-v3-turbo.bin   # modello principale (~1,5 GB)
 │   └── ggml-medium.bin           # modello per la traduzione in inglese (~1,4 GB)
+├── .index/
+│   └── search.sqlite3            # indice FTS5 ricostruibile, mai fonte di verità
 ├── _unsorted/                    # registrazioni senza gruppo
 └── <Gruppo>/
     └── 2026-11-03_09-15-00_Diritto Privato/
@@ -621,15 +631,15 @@ Legenda: ✅ disponibile · 🚧 da sviluppare · 🔭 esplorativo
 
 **Criterio di accettazione.** Ogni segmento ha `id`, `start`, `end`; il clic su un timestamp porta il player a quel punto; gli ID sopravvivono a salvataggi e riaperture. Soddisfatto per i segmenti; resta la granularità parola.
 
-#### 5. Editor a blocchi non distruttivo 🚧
+#### 5. Editor a blocchi non distruttivo ✅
 
 **Cosa.** La trascrizione resta intatta; l'utente sposta, raggruppa, tagga e annota blocchi.
 
-**Perché.** Organizzare il materiale è parte del lavoro di studio e di documentazione. L'editor attuale è un `contenteditable` che può disallineare il testo dai segmenti: va superato.
+**Perché.** Organizzare il materiale è parte del lavoro di studio e di documentazione. Prima della v1.1.0 l'editor era un `contenteditable` che poteva disallineare il testo dai segmenti.
 
-**Come.** Modello dati a blocchi immutabili, con viste e ordini dell'utente salvati separatamente. Drag & drop, gruppi, tag, note, undo/redo. La trascrizione originale resta una sorgente in sola lettura; ogni modifica è un livello sopra.
+**Come.** Modello dati a blocchi immutabili, con viste e ordini dell'utente salvati separatamente. Drag & drop, gruppi, tag, note, undo/redo. La trascrizione originale resta una sorgente in sola lettura; ogni modifica è un livello sopra. Dalla v1.1.0 sono implementati testo per blocco, nascondi/mostra, tag, annotazioni, ordine con pulsanti su/giù, gruppi, undo/redo di sessione e autosalvataggio; restano drag & drop e le sezioni manuali.
 
-**Criterio di accettazione.** Spostare o raggruppare blocchi non altera il testo originale né i timestamp; "ripristina vista originale" funziona; l'export riflette la vista scelta.
+**Criterio di accettazione.** Spostare o raggruppare blocchi non altera il testo originale né i timestamp; "ripristina vista originale" funziona; l'export riflette la vista scelta. Soddisfatto salvo drag & drop.
 
 #### 6. Sezioni manuali 🚧
 
@@ -673,15 +683,15 @@ Legenda: ✅ disponibile · 🚧 da sviluppare · 🔭 esplorativo
 
 ### C. Ricerca e riascolto
 
-#### 10. Ricerca full-text ✅/🚧
+#### 10. Ricerca full-text ✅
 
 **Cosa.** SQLite + FTS5 per trovare parole, speaker, argomenti e momenti dell'audio.
 
-**Perché.** La ricerca attuale è una sottostringa su `transcript.txt`: funziona su piccoli archivi, ma non scala a migliaia di sessioni e non gestisce ranking, stemming, frasi o filtri per speaker.
+**Perché.** Prima della v1.1.0 la ricerca era una sottostringa su `transcript.txt`: funzionava su piccoli archivi, ma non scalava a migliaia di sessioni e non gestiva ranking, stemming, frasi o filtri.
 
-**Come.** Indice SQLite FTS5 ricostruibile dai file (il filesystem resta la fonte di verità), tokenizer adatto all'italiano, ranking BM25, filtri per gruppo, speaker e data, risultati con snippet e timestamp. Migrazione e re-index automatici.
+**Come.** Indice SQLite FTS5 ricostruibile dai file (il filesystem resta la fonte di verità), tokenizer adatto all'italiano, ranking BM25, filtri per gruppo, speaker e data, risultati con snippet e timestamp. Migrazione e re-index automatici. Dalla v1.1.0 l'indice FTS5 è attivo con tokenizer `unicode61 remove_diacritics 2`, prefisso sull'ultima parola, snippet evidenziati e re-index automatico su salvataggio, rinomina, spostamento ed eliminazione; restano i filtri per data e l'evidenziazione temporale dei risultati.
 
-**Criterio di accettazione.** Query full-text su 1.000 ore in meno di 100 ms; risultati cliccabili che aprono il punto audio; indice ricostruibile senza perdita di dati.
+**Criterio di accettazione.** Query full-text su 1.000 ore in meno di 100 ms; risultati cliccabili che aprono il punto audio; indice ricostruibile senza perdita di dati. Soddisfatto per ranking, snippet e ricostruibilità; il salto al punto audio dai risultati resta in roadmap.
 
 #### 11. Riproduzione dal transcript ✅/🚧
 
@@ -914,9 +924,9 @@ https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
 - **Nessuna diarizzazione**: non sono presenti etichette Speaker A/B.
 - **Nessun riconoscimento persistente** delle voci.
 - **Nessuna gestione delle sovrapposizioni**: il testo può risultare ambiguo quando due persone parlano insieme.
-- L'editor è **testuale** (`contenteditable`), non ancora a blocchi non distruttivi. La sorgente della revisione resta immutata: il testo riscritto finisce nell'overlay come `legacyDocumentText`, in attesa dell'editor a blocchi.
+- L'editor a blocchi lavora **sui segmenti della revisione**: non può dividere o unire segmenti. Il testo riscritto del vecchio editor viene gestito esplicitamente con conversione in nuova revisione o ripristino dei segmenti originali. Restano drag & drop e sezioni manuali.
 - I **timestamp sono cliccabili solo per le revisioni con timing per segmento**; anteprime live e trascrizioni legacy mostrano il solo testo.
-- La ricerca è per sottostringa, **non ancora FTS5**.
+- La ricerca FTS5 lavora sul **testo effettivo della revisione attiva** e su nome e gruppo; non indicizza revisioni archiviate, backup o cestino. Restano i filtri per data e il salto al punto audio dai risultati.
 - **Nessuna cattura dell'audio di sistema**: è supportato solo il microfono.
 - **Nessuna sintesi automatica** e nessun highlight.
 - Un solo modello ASR alla volta; `large-v3` non è ancora selezionabile.

@@ -169,8 +169,10 @@ Finché è v1, la registrazione è v1.
   orfani vengono ignorati e segnalati.
 - `legacyDocumentText` è un campo temporaneo di compatibilità con il vecchio
   editor contenteditable: conserva il testo completo modificato quando non è
-  riconducibile ai segmenti. È deprecato e verrà eliminato con l'editor a
-  blocchi.
+  riconducibile ai segmenti. La UI lo mostra in modalità dedicata e offre solo
+  due azioni esplicite: applicarlo all'unico segmento (se ce n'è uno) oppure
+  creare una nuova revisione dal testo; "ripristina segmenti originali" rimuove
+  il campo. Non viene mai applicato implicitamente alla sorgente.
 
 ## Proiezione effettiva
 
@@ -182,6 +184,23 @@ Testo e segmenti effettivi si ottengono da:
 4. ordine `order`, con ID mancanti in coda.
 
 `transcript.txt`, export e indice di ricerca usano la proiezione effettiva.
+
+L'indice FTS5 vive fuori dalla registrazione, in `<archivio>/.index/`, perché è
+condiviso dall'intero archivio.
+
+## Stato dell'overlay
+
+La vista espone `editsStatus`:
+
+- `ok`: overlay assente o allineato; il testo è modificabile.
+- `stale-edits`: `sourceHash` non combacia con la sorgente; l'overlay non viene
+  applicato e la UI apre la revisione in sola lettura, proponendo la ricarica.
+- `invalid-edits`: schema o riferimenti non validi; stesso trattamento, senza
+  scritture automatiche.
+
+Non esiste merge automatico. Il salvataggio overlay è ottimistico su
+`editRevision`: se il contatore atteso non coincide, la richiesta fallisce con
+`edit-revision-mismatch` e la UI invita a ricaricare.
 
 ## Migrazione v1 → v2
 
@@ -209,11 +228,24 @@ Testo e segmenti effettivi si ottengono da:
   `metadata.previewReplacedAt`.
 - Cambiare revisione attiva è una sola scrittura atomica di `metadata.json`.
 
-## Indice di ricerca (fase successiva)
+## Indice di ricerca
 
-- SQLite è un indice ricostruibile, non fonte di verità.
-- Indicizza la revisione attiva e il testo effettivo.
+- SQLite è un indice ricostruibile, non fonte di verità: si trova in
+  `<archivio>/.index/search.sqlite3` e può essere cancellato a app chiusa.
+- `PRAGMA user_version = 1`. Una versione più nuova viene rifiutata, non
+  degradata.
+- Indicizza la revisione attiva e il testo effettivo (override, nascosti e
+  ordine inclusi), più nome, gruppo e data di aggiornamento.
 - Non indicizza cestino, backup o revisioni archiviate.
-- `recording:delete` elimina le righe dell'indice prima di rimuovere i file;
-  `move`, `rename` e `folder:delete` aggiornano l'indice nella stessa operazione.
-- `secure_delete = ON`, checkpoint WAL e `VACUUM` periodico.
+- Tokenizer `unicode61 remove_diacritics 2`; query sanitizzata in token quotati,
+  con prefisso sull'ultima parola; ranking BM25 e snippet senza HTML.
+- L'indice si sincronizza all'avvio in background e, se non ancora pronto, alla
+  prima ricerca. `recording:delete` elimina le righe prima di rimuovere i file;
+  `move`, `rename`, `folder:rename`, `folder:delete`, salvataggi di trascrizione,
+  cambio revisione e salvataggio overlay aggiornano l'indice nella stessa
+  operazione.
+- `secure_delete = ON`, WAL e checkpoint; la ricostruzione completa è esposta da
+  `search:rebuild`.
+- Il modulo nativo `better-sqlite3` è escluso dall'archivio asar
+  (`asarUnpack`) e ricompilato per l'ABI di Electron con
+  `scripts/rebuild-native.sh`.
