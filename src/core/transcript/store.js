@@ -154,11 +154,14 @@ function buildView(transcript, edits, editsStatus = 'ok') {
     segments: projected.segments,
     text: projected.text,
     legacyDocumentText: projected.legacyDocumentText,
+    legacyText: typeof edits?.legacyDocumentText === 'string' ? edits.legacyDocumentText : null,
     warnings: projected.warnings,
     revisionId: transcript.revisionId,
     kind: transcript.kind,
     timing: transcript.source?.timing || 'segment',
     source: transcript.source,
+    sourceSegments: transcript.segments,
+    edits,
     editsStatus,
   };
 }

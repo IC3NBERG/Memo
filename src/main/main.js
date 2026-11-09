@@ -11,8 +11,19 @@ const { downloadModelFile } = require('../core/models/download');
 const { createPathGuard, isSafeFolderName } = require('../core/storage/path-guard');
 const transcriptStore = require('../core/transcript/store');
 const { readMetadataFile, updateMetadataFile } = require('../core/library/metadata');
+const { openSearchIndex, removeIndexFiles } = require('../core/search/index');
 const {
+  indexRecording,
+  removeRecording,
+  syncRecordings,
+} = require('../core/search/recording-indexer');
+const {
+  createEditsSaveHandler,
   createRecordingSaveHandler,
+  createRevisionCreateHandler,
+  createRevisionListHandler,
+  createRevisionSwitchHandler,
+  createSearchHandler,
   createTranscriptReadHandler,
   createTranscriptSaveHandler,
 } = require('./handlers');
@@ -41,6 +52,8 @@ if (!process.env.CRUNCH_RECORDINGS_DIR
 
 const MODELS_DIR = path.join(RECORDINGS_DIR, '.models');
 const UNSORTED_DIR = path.join(RECORDINGS_DIR, '_unsorted');
+const SEARCH_INDEX_DIR = path.join(RECORDINGS_DIR, '.index');
+const SEARCH_INDEX_PATH = path.join(SEARCH_INDEX_DIR, 'search.sqlite3');
 const MODEL_FILENAME = 'ggml-large-v3-turbo.bin';
 
 // Modello dedicato alla traduzione verso l'inglese.
@@ -91,6 +104,120 @@ const recordingsPathGuard = createPathGuard(RECORDINGS_DIR);
 function isValidRecordingDir(recDir) {
   return recordingsPathGuard.isValidRecordingDir(recDir);
 }
+
+// ─── Indice di ricerca (SQLite FTS5) ──────────────────────────────────────
+// L'indice è ricostruibile: il filesystem resta l'unica fonte di verità.
+let searchIndex = null;
+let searchIndexUnavailable = false;
+let searchIndexRebuilding = false;
+let searchIndexSynced = false;
+
+function getSearchIndex() {
+  if (searchIndex) return searchIndex;
+  if (searchIndexUnavailable) return null;
+
+  try {
+    searchIndex = openSearchIndex({ dbPath: SEARCH_INDEX_PATH });
+    return searchIndex;
+  } catch (err) {
+    searchIndexUnavailable = true;
+    console.warn('Indice di ricerca non disponibile:', err.message);
+    return null;
+  }
+}
+
+function safeIndexRecording(recDir) {
+  try {
+    const index = getSearchIndex();
+    if (!index || !recDir) return;
+    indexRecording({
+      index,
+      store: transcriptStore,
+      recDir,
+      recordingsDir: RECORDINGS_DIR,
+    });
+  } catch (err) {
+    console.warn('Indicizzazione fallita:', recDir, err.message);
+  }
+}
+
+function safeRemoveIndexedRecording(recDir) {
+  try {
+    if (searchIndex && recDir) removeRecording(searchIndex, recDir);
+  } catch (_) {}
+}
+
+function collectRecordingDirs() {
+  const result = [];
+  if (!fs.existsSync(RECORDINGS_DIR)) return result;
+
+  for (const entry of fs.readdirSync(RECORDINGS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const dir = path.join(RECORDINGS_DIR, entry.name);
+    let children = [];
+    try {
+      children = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_) {
+      continue;
+    }
+    for (const child of children) {
+      if (child.isDirectory() && !child.name.startsWith('.')) {
+        result.push(path.join(dir, child.name));
+      }
+    }
+  }
+
+  return result;
+}
+
+function syncSearchIndex() {
+  const index = getSearchIndex();
+  if (!index) return { indexed: 0, skipped: 0, failed: 0 };
+  const summary = syncRecordings({
+    index,
+    store: transcriptStore,
+    recordingsDir: RECORDINGS_DIR,
+    recDirs: collectRecordingDirs(),
+  });
+  searchIndexSynced = true;
+  return summary;
+}
+
+function ensureSearchIndexSynced() {
+  const index = getSearchIndex();
+  if (!index) return;
+  // Prima ricerca troppo rapida rispetto alla sincronizzazione d'avvio.
+  if (!searchIndexSynced || index.count() === 0) syncSearchIndex();
+}
+
+function rebuildSearchIndex() {
+  if (searchIndexRebuilding) {
+    return { success: false, error: 'Ricostruzione già in corso' };
+  }
+  searchIndexRebuilding = true;
+  searchIndexSynced = false;
+
+  try {
+    if (searchIndex) {
+      try { searchIndex.close(); } catch (_) {}
+      searchIndex = null;
+    }
+    searchIndexUnavailable = false;
+    removeIndexFiles(SEARCH_INDEX_PATH);
+
+    const index = getSearchIndex();
+    if (!index) {
+      return { success: false, error: 'Impossibile creare l’indice di ricerca' };
+    }
+    const summary = syncSearchIndex();
+    return { success: true, ...summary };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    searchIndexRebuilding = false;
+  }
+}
+
 
 // ─── Crea directory necessarie ─────────────────────────────────────────────
 function ensureDirectories() {
@@ -345,6 +472,14 @@ app.whenReady().then(() => {
   createWindow();
   setupAutoUpdater();
 
+  // L'indice è ricostruibile: la sincronizzazione parte dopo la finestra e non
+  // blocca l'avvio. Le singole registrazioni vengono migrate/indicizzate qui.
+  setTimeout(() => {
+    try { syncSearchIndex(); } catch (err) {
+      console.warn('Sincronizzazione indice fallita:', err.message);
+    }
+  }, 0);
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -407,7 +542,11 @@ const handleRecordingSave = createRecordingSaveHandler({
   unsortedDir: UNSORTED_DIR,
 });
 
-ipcMain.handle('recording:save', async (event, payload) => handleRecordingSave(payload));
+ipcMain.handle('recording:save', async (event, payload) => {
+  const result = await handleRecordingSave(payload);
+  if (result?.success && result.recDir) safeIndexRecording(result.recDir);
+  return result;
+});
 
 // ─── IPC: Aggiorna durata registrazione ───────────────────────────────────
 ipcMain.handle('recording:update-duration', (event, { recDir, duration }) => {
@@ -416,6 +555,7 @@ ipcMain.handle('recording:update-duration', (event, { recDir, duration }) => {
       return { success: false, error: 'Registrazione non valida' };
     }
     updateMetadataFile(recDir, (meta) => ({ ...meta, duration }));
+    safeIndexRecording(recDir);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -533,6 +673,8 @@ ipcMain.on('transcription:start', (event, { audioPath, recDir, language, transla
         event.sender.send('transcription:error', result.error || 'Trascrizione vuota');
         return;
       }
+
+      safeIndexRecording(recDir);
 
       event.sender.send('transcription:done', {
         recDir,
@@ -873,7 +1015,13 @@ ipcMain.handle('transcription:chunk', async (event, { buffer, language, translat
 });
 
 // Libera la memoria del modello live quando l'app si chiude.
-app.on('before-quit', () => stopWhisperServer());
+app.on('before-quit', () => {
+  stopWhisperServer();
+  if (searchIndex) {
+    try { searchIndex.close(); } catch (_) {}
+    searchIndex = null;
+  }
+});
 
 // ─── IPC: Libreria ─────────────────────────────────────────────────────────
 ipcMain.handle('library:get', () => {
@@ -993,7 +1141,9 @@ ipcMain.handle('folder:rename', (event, { oldName, newName }) => {
 
     // Allinea il metadata dei file alla nuova posizione
     for (const rec of getRecordingsInDir(newPath, safeName)) {
+      safeRemoveIndexedRecording(path.join(oldPath, rec.dirName));
       updateMetadataFolder(rec.recDir, safeName);
+      safeIndexRecording(rec.recDir);
     }
 
     return { success: true, name: safeName };
@@ -1027,7 +1177,9 @@ ipcMain.handle('folder:delete', (event, { name }) => {
     for (const rec of recordings) {
       const dest = uniqueDestinationPath(UNSORTED_DIR, rec.dirName);
       fs.renameSync(rec.recDir, dest);
+      safeRemoveIndexedRecording(rec.recDir);
       updateMetadataFolder(dest, null);
+      safeIndexRecording(dest);
     }
 
     // Elimina il gruppo solo se è rimasto vuoto (a parte .DS_Store).
@@ -1076,6 +1228,11 @@ ipcMain.handle('recording:move', (event, { recDir, targetFolder }) => {
       updateMetadataFile(destPath, (meta) => ({ ...meta, folder: targetFolder || null }));
     }
 
+    if (path.resolve(destPath) !== path.resolve(recDir)) {
+      safeRemoveIndexedRecording(recDir);
+    }
+    safeIndexRecording(destPath);
+
     return { success: true, newPath: destPath };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1091,6 +1248,7 @@ ipcMain.handle('recording:rename', (event, { recDir, newName }) => {
     const safeName = newName.replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim();
     if (!safeName) return { success: false, error: 'Nome non valido' };
     updateMetadataFile(recDir, (meta) => ({ ...meta, name: safeName }));
+    safeIndexRecording(recDir);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1103,6 +1261,7 @@ ipcMain.handle('recording:delete', (event, { recDir }) => {
     if (!isValidRecordingDir(recDir)) {
       return { success: false, error: 'Registrazione non valida' };
     }
+    safeRemoveIndexedRecording(recDir);
     fs.rmSync(recDir, { recursive: true, force: true });
     return { success: true };
   } catch (err) {
@@ -1115,14 +1274,68 @@ const handleTranscriptRead = createTranscriptReadHandler({
   pathGuard: recordingsPathGuard,
   store: transcriptStore,
 });
-ipcMain.handle('transcript:read', (event, payload) => handleTranscriptRead(payload));
+ipcMain.handle('transcript:read', (event, payload) => {
+  const result = handleTranscriptRead(payload);
+  if (result.success) safeIndexRecording(payload?.recDir);
+  return result;
+});
 
 // ─── IPC: Salva trascrizione editata ──────────────────────────────────────
 const handleTranscriptSave = createTranscriptSaveHandler({
   pathGuard: recordingsPathGuard,
   store: transcriptStore,
 });
-ipcMain.handle('transcript:save', (event, payload) => handleTranscriptSave(payload));
+ipcMain.handle('transcript:save', (event, payload) => {
+  const result = handleTranscriptSave(payload);
+  if (result.success) safeIndexRecording(payload?.recDir);
+  return result;
+});
+
+// ─── IPC: Revisioni ────────────────────────────────────────────────────────
+const handleRevisionList = createRevisionListHandler({
+  pathGuard: recordingsPathGuard,
+  store: transcriptStore,
+});
+ipcMain.handle('revision:list', (event, payload) => handleRevisionList(payload));
+
+const handleRevisionSwitch = createRevisionSwitchHandler({
+  pathGuard: recordingsPathGuard,
+  store: transcriptStore,
+});
+ipcMain.handle('revision:switch', (event, payload) => {
+  const result = handleRevisionSwitch(payload);
+  if (result.success) safeIndexRecording(payload?.recDir);
+  return result;
+});
+
+const handleRevisionCreate = createRevisionCreateHandler({
+  pathGuard: recordingsPathGuard,
+  store: transcriptStore,
+});
+ipcMain.handle('revision:create-from-text', (event, payload) => {
+  const result = handleRevisionCreate(payload);
+  if (result.success) safeIndexRecording(payload?.recDir);
+  return result;
+});
+
+// ─── IPC: Overlay editor a blocchi ────────────────────────────────────────
+const handleEditsSave = createEditsSaveHandler({
+  pathGuard: recordingsPathGuard,
+  store: transcriptStore,
+});
+ipcMain.handle('edits:save', (event, payload) => {
+  const result = handleEditsSave(payload);
+  if (result.success) safeIndexRecording(payload?.recDir);
+  return result;
+});
+
+// ─── IPC: Ricerca full-text ────────────────────────────────────────────────
+const handleSearch = createSearchHandler({ getIndex: getSearchIndex });
+ipcMain.handle('search:query', (event, payload) => {
+  ensureSearchIndexSynced();
+  return handleSearch(payload);
+});
+ipcMain.handle('search:rebuild', () => rebuildSearchIndex());
 
 // ─── IPC: Export ──────────────────────────────────────────────────────────
 ipcMain.handle('transcript:export', async (event, { recDir, format, text }) => {

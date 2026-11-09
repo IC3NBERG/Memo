@@ -27,8 +27,17 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: 'npm'
 
+      # @electron/rebuild di electron-builder 25 usa node-gyp 9, che importa
+      # `distutils`: rimosso da Python 3.12. Il pacchetto setuptools fornisce
+      # lo shim necessario alla compilazione di better-sqlite3.
+      - name: Prepare Python for node-gyp
+        run: python3 -m pip install --break-system-packages setuptools || python3 -m pip install setuptools
+
       - name: Install dependencies
         run: npm ci
 
       - name: Run unit tests
         run: npm test
+
+      - name: Run tests against the Electron ABI
+        run: npm run test:electron

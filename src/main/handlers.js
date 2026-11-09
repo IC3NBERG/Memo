@@ -1,6 +1,8 @@
 'use strict';
 
 const { createRecording } = require('../core/library/recordings');
+const { TRANSCRIPT_KINDS } = require('../core/transcript/constants');
+const { parseSnippet } = require('../core/search/query');
 
 /**
  * Handler puri per i confini IPC di Fase A0. Non dipendono da Electron: main.js
@@ -73,8 +75,123 @@ function createTranscriptSaveHandler({ pathGuard, store }) {
   };
 }
 
+function createRevisionListHandler({ pathGuard, store }) {
+  return (payload = {}) => {
+    try {
+      const { recDir } = payload;
+      if (!pathGuard.isValidRecordingDir(recDir)) {
+        return { success: false, error: 'Registrazione non valida' };
+      }
+
+      const metadata = store.readMetadata(recDir);
+      return {
+        success: true,
+        activeRevisionId: metadata.activeRevisionId || null,
+        revisions: store.listRevisions(recDir),
+      };
+    } catch (err) {
+      return { success: false, error: err.message, code: err.code };
+    }
+  };
+}
+
+function createRevisionSwitchHandler({ pathGuard, store }) {
+  return (payload = {}) => {
+    try {
+      const { recDir, revisionId } = payload;
+      if (!pathGuard.isValidRecordingDir(recDir)) {
+        return { success: false, error: 'Registrazione non valida' };
+      }
+      if (typeof revisionId !== 'string' || revisionId.length === 0) {
+        return { success: false, error: 'Revisione non valida' };
+      }
+
+      return store.switchActiveRevision(recDir, revisionId);
+    } catch (err) {
+      return { success: false, error: err.message, code: err.code };
+    }
+  };
+}
+
+function createEditsSaveHandler({ pathGuard, store }) {
+  return (payload = {}) => {
+    try {
+      const { recDir, edits, expectedEditRevision } = payload;
+      if (!pathGuard.isValidRecordingDir(recDir)) {
+        return { success: false, error: 'Registrazione non valida' };
+      }
+
+      return store.saveEdits(recDir, edits, { expectedEditRevision });
+    } catch (err) {
+      return { success: false, error: err.message, code: err.code };
+    }
+  };
+}
+
+function createRevisionCreateHandler({ pathGuard, store }) {
+  return (payload = {}) => {
+    try {
+      const { recDir, kind, text, timing } = payload;
+      if (!pathGuard.isValidRecordingDir(recDir)) {
+        return { success: false, error: 'Registrazione non valida' };
+      }
+      const nextKind = TRANSCRIPT_KINDS.includes(kind) ? kind : 'transcription';
+      const body = String(text ?? '').trim();
+      if (!body) return { success: false, error: 'Nessun testo da convertire' };
+
+      return store.createRevision(recDir, {
+        kind: nextKind,
+        source: {
+          engine: null,
+          model: null,
+          language: null,
+          targetLanguage: nextKind === 'translation' ? 'en' : null,
+          complete: nextKind !== 'livePreview',
+          translated: nextKind === 'translation',
+          timing: timing === 'segment' ? 'segment' : 'whole-recording',
+          format: 'block-editor-conversion',
+        },
+        text: body,
+      });
+    } catch (err) {
+      return { success: false, error: err.message, code: err.code };
+    }
+  };
+}
+
+function createSearchHandler({ getIndex }) {
+  return (payload = {}) => {
+    try {
+      const index = getIndex();
+      if (!index) {
+        return {
+          success: false,
+          code: 'index-unavailable',
+          error: 'Indice di ricerca non disponibile',
+        };
+      }
+
+      const results = index.search(String(payload.query ?? ''), { limit: payload.limit });
+      return {
+        success: true,
+        results: results.map((row) => ({
+          ...row,
+          snippetParts: parseSnippet(row.snippet),
+        })),
+      };
+    } catch (err) {
+      return { success: false, error: err.message, code: err.code };
+    }
+  };
+}
+
 module.exports = {
+  createEditsSaveHandler,
   createRecordingSaveHandler,
+  createRevisionCreateHandler,
+  createRevisionListHandler,
+  createRevisionSwitchHandler,
+  createSearchHandler,
   createTranscriptReadHandler,
   createTranscriptSaveHandler,
 };

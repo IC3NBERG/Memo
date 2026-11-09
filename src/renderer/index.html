@@ -270,8 +270,50 @@
           </div>
         </div>
 
+        <!-- Selettore revisione -->
+        <div id="revision-bar" class="hidden">
+          <div class="revision-picker">
+            <label for="revision-select">Revisione</label>
+            <select id="revision-select"></select>
+            <span id="revision-meta" class="revision-meta"></span>
+          </div>
+          <div id="revision-hint" class="revision-hint"></div>
+        </div>
+
         <!-- Area testo trascrizione -->
         <div id="transcript-area">
+          <!-- Editor a blocchi: overlay sopra la revisione attiva -->
+          <div id="block-editor" class="hidden">
+            <div id="editor-toolbar">
+              <div class="editor-toolbar-left">
+                <button id="btn-undo" class="editor-tool-btn" title="Annulla (⌘Z)" disabled></button>
+                <button id="btn-redo" class="editor-tool-btn" title="Ripeti (⇧⌘Z)" disabled></button>
+                <span id="editor-save-status" class="editor-save-status"></span>
+              </div>
+              <div class="editor-toolbar-right">
+                <button id="btn-add-group" class="editor-tool-btn with-label">
+                  <span class="memo-icon icon-xs" id="icon-add-group-slot"></span>
+                  <span>Nuovo gruppo</span>
+                </button>
+                <button id="btn-toggle-hidden" class="editor-tool-btn with-label" disabled>
+                  <span>Nascosti (0)</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="editor-banner" class="editor-banner hidden"></div>
+            <div id="groups-bar" class="groups-bar hidden"></div>
+
+            <div id="block-list" class="block-list"></div>
+            <div id="hidden-blocks" class="hidden-blocks hidden"></div>
+
+            <div id="block-empty" class="block-empty hidden">
+              <strong>Nessun blocco visibile</strong>
+              <span>Puoi ripristinare i blocchi nascosti dal pulsante in alto.</span>
+            </div>
+          </div>
+
+          <!-- Fallback legacy / nessuna trascrizione -->
           <div id="transcript-content" contenteditable="true" spellcheck="true"
                data-placeholder="La trascrizione apparirà qui. Puoi modificarla direttamente o digitare note personali."></div>
           <div id="timestamps-margin"></div>
@@ -538,6 +580,7 @@
   <!-- Script iconografico e logica applicativa -->
   <script src="icons.js"></script>
   <script src="audio-dsp.js"></script>
+  <script src="block-model.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

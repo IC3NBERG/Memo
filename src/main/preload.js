@@ -45,6 +45,16 @@ const api = {
   transcriptSave: (data) => ipcRenderer.invoke('transcript:save', data),
   transcriptExport: (data) => ipcRenderer.invoke('transcript:export', data),
 
+  // Revisioni e overlay a blocchi
+  revisionList: (data) => ipcRenderer.invoke('revision:list', data),
+  revisionSwitch: (data) => ipcRenderer.invoke('revision:switch', data),
+  revisionCreateFromText: (data) => ipcRenderer.invoke('revision:create-from-text', data),
+  editsSave: (data) => ipcRenderer.invoke('edits:save', data),
+
+  // Ricerca full-text
+  searchQuery: (data) => ipcRenderer.invoke('search:query', data),
+  searchRebuild: () => ipcRenderer.invoke('search:rebuild'),
+
   // Audio
   audioGetPath: (data) => ipcRenderer.invoke('audio:get-path', data),
 

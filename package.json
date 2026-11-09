@@ -7,13 +7,15 @@
     "start": "electron .",
     "test": "node --test test/*.test.js",
     "test:unit": "node --test test/*.test.js",
-    "build": "electron-builder --mac",
-    "build:dir": "electron-builder --mac --dir",
+    "test:electron": "ELECTRON_RUN_AS_NODE=1 electron --test test/*.test.js",
+    "rebuild:native": "bash scripts/rebuild-native.sh",
+    "build": "npm run rebuild:native && electron-builder --mac",
+    "build:dir": "npm run rebuild:native && electron-builder --mac --dir",
     "build-whisper": "bash scripts/build-whisper.sh",
     "benchmark-live": "node scripts/benchmark-live.mjs",
     "verify-releases": "bash scripts/verify-releases.sh",
     "install:app": "cp -R dist/mac-arm64/Crunch.app /Applications/ && echo 'Crunch installata con successo in /Applications/Crunch.app!'",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "bash scripts/rebuild-native.sh"
   },
   "repository": {
     "type": "git",
@@ -24,6 +26,7 @@
     "electron-builder": "^25.0.0"
   },
   "dependencies": {
+    "better-sqlite3": "^12.4.1",
     "electron-updater": "^6.8.11"
   },
   "build": {
@@ -32,6 +35,9 @@
     "directories": {
       "output": "dist"
     },
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*"
+    ],
     "publish": [
       {
         "provider": "github",
