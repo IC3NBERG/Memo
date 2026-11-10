@@ -7,9 +7,9 @@ Crunch è un'applicazione desktop per macOS Apple Silicon che registra, trascriv
 [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-000000?logo=apple&logoColor=white)](#integrazione-con-apple)
 [![Engine](https://img.shields.io/badge/engine-whisper.cpp%20%2B%20Metal-2563EB)](#i-modelli-ai-scelta-e-funzionamento)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20locale-15803D)](#privacy-dati-e-sicurezza)
-[![Version](https://img.shields.io/badge/version-1.1.0-6B7280)](#)
+[![Version](https://img.shields.io/badge/version-1.2.0-6B7280)](#)
 
-> **Stato attuale: v1.1.0 — macOS (Apple Silicon).**
+> **Stato attuale: v1.2.0 — macOS (Apple Silicon).**
 > Windows e Linux sono nella roadmap e verranno supportati: vedi [Piattaforme e promessa cross-platform](#piattaforme-e-promessa-cross-platform).
 
 ---
@@ -43,7 +43,7 @@ Crunch nasce per due pubblici che condividono lo stesso problema: **non perdere 
 | **Studente universitario** | seguire una lezione di 1–2 ore, ritrovare un passaggio, preparare l'esame | trascrizione completa, timestamp, gruppi per materia, export Markdown da integrare negli appunti |
 | **Professionista** | documentare una riunione, un'intervista o una formazione senza trascrivere a mano | registrazione e trascrizione locali, ricerca nel testo, export TXT/Markdown per verbali e note operative |
 | **Consulente / formatore** | conservare ore di contenuti e citarli con precisione | archivio portabile, trascrizioni con segmenti temporali, nessun upload a servizi terzi |
-| **Team e ricerca** | costruire una base di conoscenza verificabile e riservata | storage locale, struttura a gruppi, ricerca full-text FTS5, editor a blocchi, dati in formati aperti; in roadmap sintesi con citazioni e diarizzazione |
+| **Team e ricerca** | costruire una base di conoscenza verificabile e riservata | storage locale, struttura a gruppi, ricerca full-text FTS5, editor testuale, dati in formati aperti; in roadmap sintesi con citazioni e diarizzazione |
 
 ### Valore per lo studente
 
@@ -58,7 +58,7 @@ Crunch nasce per due pubblici che condividono lo stesso problema: **non perdere 
 - **Riservatezza.** Audio, nomi dei gruppi e contenuti restano sul dispositivo, requisito essenziale per clienti, HR, legale e ricerca.
 - **Portabilità.** L'archivio è composto da cartelle e file standard: nessun lock-in applicativo.
 
-> **Nota di trasparenza.** Le capacità di editing strutturato e ricerca full-text sono disponibili nella v1.1.0; diarizzazione e sintesi restano in roadmap e sono indicate come tali nel documento. Crunch non presenta come disponibili funzioni non ancora implementate.
+> **Nota di trasparenza.** Le capacità di editing e ricerca full-text sono disponibili nella v1.2.0; diarizzazione e sintesi restano in roadmap e sono indicate come tali nel documento. Crunch non presenta come disponibili funzioni non ancora implementate.
 
 ---
 
@@ -95,7 +95,7 @@ Crunch vuole essere un **quaderno operativo locale e verificabile**: ogni parola
 Registra → Trascrive → Separa le voci → Struttura in blocchi → Cerca e riascolta → Riassume con citazioni → Esporta
 ```
 
-Oggi Crunch copre in modo solido i primi due passaggi e buona parte del terzo — organizzazione per gruppi, editor a blocchi non distruttivo, ricerca full-text FTS5, timestamp, riproduzione ed esportazione. I passaggi successivi (diarizzazione, sintesi citabile, sezioni manuali, doppia sorgente audio) sono descritti nella [roadmap](#roadmap-i-prossimi-punti-da-sviluppare).
+Oggi Crunch copre in modo solido i primi due passaggi e buona parte del terzo — organizzazione per gruppi, editor testuale con autosalvataggio, ricerca full-text FTS5, timestamp, riproduzione ed esportazione. I passaggi successivi (diarizzazione, sintesi citabile, sezioni manuali, doppia sorgente audio) sono descritti nella [roadmap](#roadmap-i-prossimi-punti-da-sviluppare).
 
 ### Non-obiettivi
 
@@ -107,7 +107,7 @@ Oggi Crunch copre in modo solido i primi due passaggi e buona parte del terzo �
 
 ## Stato del prodotto
 
-| Area | Disponibile nella v1.1.0 | In roadmap |
+| Area | Disponibile nella v1.2.0 | In roadmap |
 |---|---|---|
 | Registrazione locale | ✅ microfono, pausa/ripresa, WAV 16 kHz | doppia sorgente microfono + sistema |
 | Preprocessing audio | ✅ passa-alto, noise gate, compressore, AGC adattivo, limiter | preset per ambiente |
@@ -115,10 +115,18 @@ Oggi Crunch copre in modo solido i primi due passaggi e buona parte del terzo �
 | Lingue | ✅ rilevamento automatico, traduzione in inglese con modello dedicato | selezione esplicita del modello |
 | Organizzazione | ✅ gruppi, rinomina, spostamento, anti-sovrascrittura; revisioni immutabili | sezioni manuali |
 | Consultazione | ✅ ricerca full-text FTS5 con snippet, timestamp cliccabili, player, copia, export | evidenziazione del segmento attivo, filtri per data |
-| Editing | ✅ editor a blocchi non distruttivo: testo, nascondi, tag, annotazioni, ordine, gruppi, undo/redo | drag & drop, sezioni manuali |
+| Editing | ✅ editor unico a blocco di testo come v1.0.9, autosalvataggio e timestamp cliccabili | editor strutturato a blocchi, drag & drop, sezioni manuali |
 | Gestione modelli | ✅ dormienti: download solo su richiesta, offline dopo il primo scaricamento | verifica integrità e aggiornamento modelli |
 | Intelligenza del contenuto | — | diarizzazione, speaker persistenti, highlight, sintesi citabile |
 | Piattaforme | ✅ macOS Apple Silicon | Windows, Linux |
+
+### Novità della v1.2.0
+
+- **Editor a blocco di testo unico**: ripristinata la vista storica della v1.0.9. La trascrizione si legge e si modifica in un unico `contenteditable`, senza blocchi, toolbar di editing o gruppi di segmenti.
+- **Rinomina di gruppi e registrazioni**: nuovo modale di rinomina al posto del `prompt()` non supportato da Electron. Pulsante matita su ogni nota e doppio click sul titolo per rinominare al volo.
+- **Annulla registrazione immediato**: dalla modale di salvataggio, "Annulla" scarta subito l'audio senza una seconda conferma.
+- **Gruppi sempre aperti dopo eliminazione**: lo stato aperto/chiuso dei menu a tendina e la posizione di scorrimento della sidebar restano invariati dopo l'eliminazione di una nota.
+- **UI più reattiva**: rendering della sidebar e della trascrizione con fragment, ridisegni coalescenti durante la ricerca, apertura nota con lettura audio e trascrizione in parallelo, waveform senza allocazioni per frame e font web non bloccante.
 
 ### Novità della v1.1.0
 
@@ -631,15 +639,15 @@ Legenda: ✅ disponibile · 🚧 da sviluppare · 🔭 esplorativo
 
 **Criterio di accettazione.** Ogni segmento ha `id`, `start`, `end`; il clic su un timestamp porta il player a quel punto; gli ID sopravvivono a salvataggi e riaperture. Soddisfatto per i segmenti; resta la granularità parola.
 
-#### 5. Editor a blocchi non distruttivo ✅
+#### 5. Editor a blocchi non distruttivo (non esposto dalla v1.2.0)
 
-**Cosa.** La trascrizione resta intatta; l'utente sposta, raggruppa, tagga e annota blocchi.
+**Cosa.** La trascrizione resta intatta; il modello a blocchi esiste ancora nei dati, ma dalla v1.2.0 l'interfaccia usa di nuovo un unico blocco di testo come nella v1.0.9.
 
-**Perché.** Organizzare il materiale è parte del lavoro di studio e di documentazione. Prima della v1.1.0 l'editor era un `contenteditable` che poteva disallineare il testo dai segmenti.
+**Perché.** Organizzare il materiale è parte del lavoro di studio e di documentazione. La vista a blocchi è stata ritirata perché meno immediata per l'uso quotidiano; il modello resta disponibile per evoluzioni future.
 
-**Come.** Modello dati a blocchi immutabili, con viste e ordini dell'utente salvati separatamente. Drag & drop, gruppi, tag, note, undo/redo. La trascrizione originale resta una sorgente in sola lettura; ogni modifica è un livello sopra. Dalla v1.1.0 sono implementati testo per blocco, nascondi/mostra, tag, annotazioni, ordine con pulsanti su/giù, gruppi, undo/redo di sessione e autosalvataggio; restano drag & drop e le sezioni manuali.
+**Come.** Modello dati a blocchi immutabili, con viste e ordini dell'utente salvati separatamente. La trascrizione originale resta una sorgente in sola lettura; ogni modifica è un livello sopra. L'editor a blocchi non è più raggiungibile dalla UI.
 
-**Criterio di accettazione.** Spostare o raggruppare blocchi non altera il testo originale né i timestamp; "ripristina vista originale" funziona; l'export riflette la vista scelta. Soddisfatto salvo drag & drop.
+**Criterio di accettazione.** La vista testuale unica non altera il testo originale né i timestamp; l'export riflette il testo modificato.
 
 #### 6. Sezioni manuali 🚧
 
@@ -924,7 +932,7 @@ https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
 - **Nessuna diarizzazione**: non sono presenti etichette Speaker A/B.
 - **Nessun riconoscimento persistente** delle voci.
 - **Nessuna gestione delle sovrapposizioni**: il testo può risultare ambiguo quando due persone parlano insieme.
-- L'editor a blocchi lavora **sui segmenti della revisione**: non può dividere o unire segmenti. Il testo riscritto del vecchio editor viene gestito esplicitamente con conversione in nuova revisione o ripristino dei segmenti originali. Restano drag & drop e sezioni manuali.
+- Dalla v1.2.0 l'editor usa un unico blocco di testo: le modifiche vengono salvate come testo della trascrizione, mentre la sorgente a segmenti resta intatta per timestamp ed export.
 - I **timestamp sono cliccabili solo per le revisioni con timing per segmento**; anteprime live e trascrizioni legacy mostrano il solo testo.
 - La ricerca FTS5 lavora sul **testo effettivo della revisione attiva** e su nome e gruppo; non indicizza revisioni archiviate, backup o cestino. Restano i filtri per data e il salto al punto audio dai risultati.
 - **Nessuna cattura dell'audio di sistema**: è supportato solo il microfono.

@@ -613,6 +613,8 @@ input, select, textarea { font-family: var(--font); }
   position: relative;
   overflow: hidden;
   border-left: 3px solid transparent;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 54px;
 }
 .rec-item:hover { background: var(--surface); }
 .rec-item.active {
@@ -1785,6 +1787,8 @@ input, select, textarea { font-family: var(--font); }
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 9px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 110px;
 }
 .block-time {
   width: 52px;

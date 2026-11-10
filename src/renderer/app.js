@@ -86,6 +86,7 @@ function formatDate(iso) {
 // ─── Stato globale ────────────────────────────────────────────
 const state = {
   library: { folders: [], unsorted: [] },
+  folderOpenState: new Map(), // conserva l'apertura dei gruppi tra un refresh e l'altro
   searchQuery: '',
   activeRec: null,           // registrazione attiva nella vista
   transcript: null,          // trascrizione caricata
@@ -247,7 +248,7 @@ const UI = {
   btnExportMd:         $('btn-export-md'),
   iconMdSlot:          $('icon-md-slot'),
 
-  // Revision bar
+  // Revision bar (rimossa dalla UI: le revisioni restano archiviate su disco)
   revisionBar:         $('revision-bar'),
   revisionSelect:      $('revision-select'),
   revisionMeta:        $('revision-meta'),
@@ -322,6 +323,13 @@ const UI = {
   moveFolderList:      $('move-folder-list'),
   btnMoveCancel:       $('btn-move-cancel'),
 
+  modalRename:         $('modal-rename'),
+  modalRenameIconSlot: $('modal-rename-icon-slot'),
+  renameTitle:         $('rename-title'),
+  inputRename:         $('input-rename'),
+  btnRenameCancel:     $('btn-rename-cancel'),
+  btnRenameConfirm:    $('btn-rename-confirm'),
+
   modalConfirm:        $('modal-confirm'),
   modalTrashIconSlot:  $('modal-trash-icon-slot'),
   confirmTitle:        $('confirm-title'),
@@ -382,6 +390,7 @@ function injectStaticIcons() {
   if (UI.iconVolumeSlot) UI.iconVolumeSlot.innerHTML = ICONS.volume;
 
   if (UI.modalNewFolderIconSlot) UI.modalNewFolderIconSlot.innerHTML = ICONS.folderPlus;
+  if (UI.modalRenameIconSlot) UI.modalRenameIconSlot.innerHTML = ICONS.edit;
   if (UI.modalMoveIconSlot) UI.modalMoveIconSlot.innerHTML = ICONS.move;
   if (UI.modalTrashIconSlot) UI.modalTrashIconSlot.innerHTML = ICONS.trash;
   if (UI.modalRecIconSlot) UI.modalRecIconSlot.innerHTML = ICONS.mic;
@@ -468,6 +477,35 @@ function confirmDialog(title, message, okLabel = 'Conferma', danger = false) {
   });
 }
 
+// Dialog di rinomina basato su Promise: usato sia per i gruppi sia per le note.
+let renameDialogResolver = null;
+
+function openRenameDialog(title, initialValue = '') {
+  if (!UI.modalRename) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    renameDialogResolver = resolve;
+    if (UI.renameTitle) UI.renameTitle.textContent = title;
+    if (UI.inputRename) {
+      UI.inputRename.value = initialValue || '';
+      UI.modalRename.classList.remove('hidden');
+      UI.inputRename.focus();
+      UI.inputRename.select();
+    } else {
+      UI.modalRename.classList.remove('hidden');
+    }
+    updateBannerOffset();
+  });
+}
+
+function closeRenameDialog(value) {
+  if (!UI.modalRename) return;
+  UI.modalRename.classList.add('hidden');
+  const resolve = renameDialogResolver;
+  renameDialogResolver = null;
+  if (resolve) resolve(value);
+  updateBannerOffset();
+}
+
 function setTranscribing(active, mode = 'transcribe') {
   state.transcribing = active;
 
@@ -501,8 +539,18 @@ function setTranscribing(active, mode = 'transcribe') {
 // ══════════════════════════════════════════════════════════════
 // 2. AVVIO & SETUP
 // ══════════════════════════════════════════════════════════════
+// Il font è opzionale: caricarlo dopo il primo paint evita di bloccare la UI
+// (o di attendere il timeout di rete quando l'app è offline).
+function loadAppFont() {
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = 'https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap';
+  document.head.appendChild(link);
+}
+
 async function init() {
   injectStaticIcons();
+  loadAppFont();
   setupResizer();
   setupRecControls();
   setupTranscriptControls();
@@ -595,6 +643,8 @@ function setupKeyboardNavigation() {
           UI.btnSaveCancel?.click();
         } else if (openModal === UI.modalConfirm) {
           UI.btnConfirmCancel?.click();
+        } else if (openModal === UI.modalRename) {
+          UI.btnRenameCancel?.click();
         } else {
           openModal.classList.add('hidden');
         }
@@ -625,7 +675,7 @@ function setupSearchControls() {
       state.searchResults = null;
       state.searchResultIds = new Set();
       state.searchSeq += 1;
-      renderLibrary();
+      scheduleLibraryRender();
       return;
     }
 
@@ -634,7 +684,7 @@ function setupSearchControls() {
     state.searchResults = null;
     state.searchResultIds = new Set();
     state.searchTimer = setTimeout(() => runFullTextSearch(state.searchQuery), 180);
-    renderLibrary();
+    scheduleLibraryRender();
   });
 
   UI.btnClearSearch?.addEventListener('click', () => {
@@ -1198,6 +1248,7 @@ function resumeRecording() {
     state.mediaRecorder.resume();
     state.paused = false;
     startTimer();
+    drawWaveform();
     if (state.liveTranscriptionEnabled) {
       startLiveTranscriptionLoop();
     }
@@ -1356,15 +1407,10 @@ function showSaveNameModal(wavBuffer) {
 
   const cancel = () => {
     if (saving) return;
-    showConfirmModal(
-      'Scartare la registrazione?',
-      'La registrazione non è ancora stata salvata. Se continui verrà persa definitivamente.',
-      () => {
-        resetRecordingState();
-        restoreMainView();
-        showToast('Registrazione scartata', 'info', 2000);
-      }
-    );
+    // Annulla scarta subito l'audio: nessuna doppia conferma.
+    resetRecordingState();
+    restoreMainView();
+    showToast('Registrazione annullata', 'info', 2000);
   };
 
   const save = async () => {
@@ -1474,6 +1520,8 @@ function resizeCanvas() {
   canvas.height = h * dpr;
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
+  waveformFillGrad = null;
+  waveformLineGrad = null;
   if (!state.recording) paintIdleWaveform();
 }
 
@@ -1504,62 +1552,91 @@ function paintIdleWaveform() {
   ctx.setLineDash([]);
 }
 
+// Buffer riutilizzabili: evitano allocazioni e GC a 60 fps durante la REC.
+let waveformDataArray = null;
+let waveformX = null;
+let waveformY = null;
+let waveformFillGrad = null;
+let waveformLineGrad = null;
+let waveformGradW = 0;
+let waveformGradH = 0;
+
 function drawWaveform() {
   const canvas = UI.waveformCanvas;
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width;
-  const H = canvas.height;
-  const analyser = state.analyserNode;
+  if (!canvas) return;
 
-  if (!analyser || !state.recording) {
+  // In pausa (o a registrazione ferma) non serve ridisegnare a 60 fps.
+  if (!state.recording || state.paused) {
     paintIdleWaveform();
     return;
   }
 
   requestAnimationFrame(drawWaveform);
 
+  const analyser = state.analyserNode;
+  if (!analyser) {
+    paintIdleWaveform();
+    return;
+  }
+  if (document.hidden) return;
+
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
   const bufLen = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufLen);
-  analyser.getByteTimeDomainData(dataArray);
+
+  if (!waveformDataArray || waveformDataArray.length !== bufLen) {
+    waveformDataArray = new Uint8Array(bufLen);
+    waveformX = new Float32Array(bufLen);
+    waveformY = new Float32Array(bufLen);
+  }
+
+  analyser.getByteTimeDomainData(waveformDataArray);
 
   ctx.clearRect(0, 0, W, H);
 
   const dpr = window.devicePixelRatio || 1;
   const mid = H / 2;
   const sliceWidth = W / bufLen;
-  const points = new Array(bufLen);
 
   for (let i = 0; i < bufLen; i++) {
-    const v = (dataArray[i] - 128) / 128;
-    points[i] = { x: i * sliceWidth, y: mid + v * mid * 0.78 };
+    const v = (waveformDataArray[i] - 128) / 128;
+    waveformX[i] = i * sliceWidth;
+    waveformY[i] = mid + v * mid * 0.78;
+  }
+
+  if (!waveformFillGrad || waveformGradW !== W || waveformGradH !== H) {
+    waveformGradW = W;
+    waveformGradH = H;
+
+    waveformFillGrad = ctx.createLinearGradient(0, 0, 0, H);
+    waveformFillGrad.addColorStop(0, 'rgba(232, 168, 73, 0.20)');
+    waveformFillGrad.addColorStop(0.5, 'rgba(232, 168, 73, 0.04)');
+    waveformFillGrad.addColorStop(1, 'rgba(232, 168, 73, 0.20)');
+
+    waveformLineGrad = ctx.createLinearGradient(0, 0, W, 0);
+    waveformLineGrad.addColorStop(0, '#D4723C');
+    waveformLineGrad.addColorStop(0.5, '#F3C476');
+    waveformLineGrad.addColorStop(1, '#D4723C');
   }
 
   // Nastro simmetrico: dà corpo all'onda senza appesantirla.
-  const fill = ctx.createLinearGradient(0, 0, 0, H);
-  fill.addColorStop(0, 'rgba(232, 168, 73, 0.20)');
-  fill.addColorStop(0.5, 'rgba(232, 168, 73, 0.04)');
-  fill.addColorStop(1, 'rgba(232, 168, 73, 0.20)');
   ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < bufLen; i++) ctx.lineTo(points[i].x, points[i].y);
-  for (let i = bufLen - 1; i >= 0; i--) ctx.lineTo(points[i].x, H - points[i].y);
+  ctx.moveTo(waveformX[0], waveformY[0]);
+  for (let i = 1; i < bufLen; i++) ctx.lineTo(waveformX[i], waveformY[i]);
+  for (let i = bufLen - 1; i >= 0; i--) ctx.lineTo(waveformX[i], H - waveformY[i]);
   ctx.closePath();
-  ctx.fillStyle = fill;
+  ctx.fillStyle = waveformFillGrad;
   ctx.fill();
-
-  const grad = ctx.createLinearGradient(0, 0, W, 0);
-  grad.addColorStop(0, '#D4723C');
-  grad.addColorStop(0.5, '#F3C476');
-  grad.addColorStop(1, '#D4723C');
 
   ctx.lineWidth = 1.8 * dpr;
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = grad;
+  ctx.strokeStyle = waveformLineGrad;
   ctx.shadowColor = 'rgba(232, 168, 73, 0.7)';
   ctx.shadowBlur = 8 * dpr;
   ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < bufLen; i++) ctx.lineTo(points[i].x, points[i].y);
+  ctx.moveTo(waveformX[0], waveformY[0]);
+  for (let i = 1; i < bufLen; i++) ctx.lineTo(waveformX[i], waveformY[i]);
   ctx.stroke();
   ctx.shadowBlur = 0;
 }
@@ -1630,7 +1707,6 @@ function setupTranscriptControls() {
 
       applyTranscriptResult({ transcript, revisionId: transcript?.revisionId });
       updateTranscriptStatusBadge();
-      loadRevisions(completedRecDir);
     }
 
     refreshLibrary();
@@ -1660,20 +1736,6 @@ function setupTranscriptControls() {
 // ══════════════════════════════════════════════════════════════
 // 5b. REVISIONI E EDITOR A BLOCCHI
 // ══════════════════════════════════════════════════════════════
-const KIND_LABELS = {
-  transcription: 'Trascrizione',
-  translation: 'Traduzione',
-  livePreview: 'Anteprima live',
-};
-
-function revisionLabel(entry) {
-  if (!entry) return '';
-  const kind = KIND_LABELS[entry.kind] || entry.kind || 'Revisione';
-  const stateLabel = entry.complete ? 'completa' : 'parziale';
-  const timing = entry.timing === 'segment' ? 'timestamp per segmento' : 'solo durata';
-  return `${entry.revisionId} · ${kind} · ${stateLabel} · ${timing}`;
-}
-
 function setupEditorControls() {
   UI.revisionSelect?.addEventListener('change', () => {
     handleRevisionChange(UI.revisionSelect.value);
@@ -1735,9 +1797,8 @@ function applyTranscriptResult(result, { resetHistory = true } = {}) {
   state.transcript = view;
   state.edits = view.edits ? BlockModel.cloneEdits(view.edits) : null;
   state.sourceSegments = Array.isArray(view.sourceSegments) ? view.sourceSegments : [];
-  state.editorMode = view.legacyDocumentText
-    ? 'legacy'
-    : (state.sourceSegments.length > 0 ? 'blocks' : 'none');
+  // Visualizzazione unica a blocco di testo (come v1.0.9): niente editor a blocchi.
+  state.editorMode = 'none';
   state.editorReadOnly = view.editsStatus === 'stale-edits'
     || view.editsStatus === 'invalid-edits';
   state.activeRevisionId = result?.revisionId || view.revisionId || state.activeRevisionId;
@@ -1776,42 +1837,18 @@ async function loadRevisions(recDir = state.activeRec?.recDir) {
 }
 
 function renderRevisionBar() {
+  // La barra delle revisioni è stata rimossa dalla UI: le revisioni restano
+  // archiviate su disco e vengono applicate automaticamente dal main.
   if (!UI.revisionBar) return;
-
-  const hasRevisions = state.revisions.length > 0 && !!state.activeRevisionId;
-  UI.revisionBar.classList.toggle('hidden', !hasRevisions);
-  if (!hasRevisions) {
-    UI.revisionSelect.innerHTML = '';
-    UI.revisionMeta.textContent = '';
-    UI.revisionHint.textContent = '';
-    return;
-  }
-
-  const previous = UI.revisionSelect.value;
-  UI.revisionSelect.innerHTML = '';
-  for (const entry of state.revisions) {
-    const option = document.createElement('option');
-    option.value = entry.revisionId;
-    option.textContent = revisionLabel(entry);
-    UI.revisionSelect.appendChild(option);
-  }
-  UI.revisionSelect.value = state.activeRevisionId || previous;
-
-  const active = state.revisions.find((entry) => entry.revisionId === state.activeRevisionId);
-  UI.revisionMeta.textContent = active ? revisionLabel(active) : '';
-
-  const latest = state.revisions[state.revisions.length - 1];
-  if (latest && latest.revisionId !== state.activeRevisionId) {
-    UI.revisionHint.textContent = `La revisione più recente è ${latest.revisionId}: le precedenti restano archiviate e consultabili.`;
-  } else if (state.revisions.length > 1) {
-    UI.revisionHint.textContent = `${state.revisions.length} revisioni conservate, nessun testo è stato sovrascritto.`;
-  } else {
-    UI.revisionHint.textContent = '';
-  }
+  UI.revisionBar.classList.add('hidden');
+  if (UI.revisionSelect) UI.revisionSelect.innerHTML = '';
+  if (UI.revisionMeta) UI.revisionMeta.textContent = '';
+  if (UI.revisionHint) UI.revisionHint.textContent = '';
 }
 
 async function handleRevisionChange(revisionId) {
   if (!revisionId || !state.activeRec || revisionId === state.activeRevisionId) return;
+  if (!UI.revisionSelect) return;
 
   const recDir = state.activeRec.recDir;
   UI.revisionSelect.disabled = true;
@@ -2140,7 +2177,6 @@ async function reloadActiveTranscript() {
   if (!state.activeRec || state.activeRec.recDir !== recDir) return;
   if (result?.success) {
     applyTranscriptResult(result);
-    await loadRevisions(recDir);
     updateTranscriptStatusBadge();
   }
 }
@@ -2380,9 +2416,11 @@ function renderBlockEditor() {
   const visibleIds = blocks.map((block) => block.id);
 
   UI.blockList.innerHTML = '';
+  const fragment = document.createDocumentFragment();
   blocks.forEach((segment, index) => {
-    UI.blockList.appendChild(createBlockRow(segment, index, blocks.length, visibleIds));
+    fragment.appendChild(createBlockRow(segment, index, blocks.length, visibleIds));
   });
+  UI.blockList.appendChild(fragment);
 
   if (UI.btnToggleHidden) {
     UI.btnToggleHidden.disabled = hidden.length === 0;
@@ -2529,7 +2567,6 @@ async function convertLegacyText() {
       return;
     }
     applyTranscriptResult(result);
-    await loadRevisions(recDir);
     refreshLibrary();
     showToast(`Nuova revisione ${result.revisionId} creata dal testo legacy.`, 'success', 3500);
   } catch (err) {
@@ -2839,16 +2876,6 @@ function updateTranscriptStatusBadge() {
 
 function renderTranscript() {
   if (!state.transcript) return;
-
-  if (state.editorMode === 'blocks') {
-    renderBlockEditor();
-    return;
-  }
-  if (state.editorMode === 'legacy') {
-    renderLegacyEditor();
-    return;
-  }
-
   renderPlainTranscript();
 }
 
@@ -2866,8 +2893,8 @@ function renderPlainTranscript() {
     UI.transcriptContent.textContent = text || '';
   } else {
     UI.timestampsMargin.classList.add('visible');
-    UI.timestampsMargin.innerHTML = '';
-    UI.transcriptContent.innerHTML = '';
+    const tsFragment = document.createDocumentFragment();
+    const textFragment = document.createDocumentFragment();
 
     segments.forEach(seg => {
       const tsEl = document.createElement('span');
@@ -2884,14 +2911,17 @@ function renderPlainTranscript() {
           seek();
         }
       });
-      UI.timestampsMargin.appendChild(tsEl);
+      tsFragment.appendChild(tsEl);
 
       const span = document.createElement('span');
       span.style.display = 'block';
       span.style.lineHeight = '1.5em';
       span.textContent = seg.text + ' ';
-      UI.transcriptContent.appendChild(span);
+      textFragment.appendChild(span);
     });
+
+    UI.timestampsMargin.replaceChildren(tsFragment);
+    UI.transcriptContent.replaceChildren(textFragment);
   }
 }
 
@@ -2983,7 +3013,8 @@ async function refreshLibrary() {
 }
 
 function renderLibrary() {
-  UI.libraryTree.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+  const scrollTop = UI.libraryTree.scrollTop;
 
   const { folders, unsorted } = state.library;
   const query = state.searchQuery;
@@ -3009,7 +3040,9 @@ function renderLibrary() {
     emptyMsg.appendChild(icon);
     emptyMsg.appendChild(title);
     emptyMsg.appendChild(hint);
-    UI.libraryTree.appendChild(emptyMsg);
+    fragment.appendChild(emptyMsg);
+    UI.libraryTree.replaceChildren(fragment);
+    UI.libraryTree.scrollTop = scrollTop;
     return;
   }
 
@@ -3022,7 +3055,7 @@ function renderLibrary() {
         ...folder,
         recordings: query && !matchesFolder ? filteredRecordings : folder.recordings,
       }, query.length > 0);
-      UI.libraryTree.appendChild(folderEl);
+      fragment.appendChild(folderEl);
     }
   });
 
@@ -3036,11 +3069,11 @@ function renderLibrary() {
       isSystem: true,
     };
     const unsortedEl = createFolderElement(unsortedFolder, query.length > 0);
-    UI.libraryTree.appendChild(unsortedEl);
+    fragment.appendChild(unsortedEl);
   }
 
   // Nessun risultato per la ricerca
-  if (UI.libraryTree.children.length === 0 && query) {
+  if (fragment.childElementCount === 0 && query) {
     const emptyMsg = document.createElement('div');
     emptyMsg.className = 'library-empty';
     emptyMsg.style.padding = '20px 14px';
@@ -3062,8 +3095,22 @@ function renderLibrary() {
     emptyMsg.appendChild(strong);
     emptyMsg.appendChild(document.createTextNode('"'));
 
-    UI.libraryTree.appendChild(emptyMsg);
+    fragment.appendChild(emptyMsg);
   }
+
+  UI.libraryTree.replaceChildren(fragment);
+  UI.libraryTree.scrollTop = scrollTop;
+}
+
+// Coalesce i ridisegni della sidebar: evita un rebuild completo a ogni tasto.
+let libraryRenderQueued = false;
+function scheduleLibraryRender() {
+  if (libraryRenderQueued) return;
+  libraryRenderQueued = true;
+  requestAnimationFrame(() => {
+    libraryRenderQueued = false;
+    renderLibrary();
+  });
 }
 
 function filterRecordings(recs, query, resultMap = null) {
@@ -3148,7 +3195,15 @@ function createFolderElement(folder, autoExpand = false) {
     recList.appendChild(recEl);
   });
 
-  let isOpen = autoExpand || (recordings.length > 0 && !isSystem);
+  // Conserva lo stato aperto/chiuso del gruppo anche dopo un refresh (es. dopo
+  // l'eliminazione di una nota): il menu a tendina non deve richiudersi.
+  const folderKey = isSystem ? '_unsorted' : folder.name;
+  const savedOpen = state.folderOpenState.get(folderKey);
+  let isOpen = autoExpand ? true : (savedOpen === undefined
+    ? (recordings.length > 0 && !isSystem)
+    : savedOpen);
+  // Durante la ricerca l'apertura è forzata e non va memorizzata.
+  if (!autoExpand) state.folderOpenState.set(folderKey, isOpen);
 
   const applyOpenState = () => {
     wrap.classList.toggle('open', isOpen);
@@ -3162,6 +3217,7 @@ function createFolderElement(folder, autoExpand = false) {
 
   const toggleOpen = () => {
     isOpen = !isOpen;
+    state.folderOpenState.set(folderKey, isOpen);
     applyOpenState();
   };
 
@@ -3198,12 +3254,12 @@ function createRecordingElement(rec, folderName) {
   const nameEl = document.createElement('div');
   nameEl.className = 'rec-item-name';
   nameEl.textContent = rec.name || rec.dirName;
-  nameEl.title = `${rec.name || rec.dirName}\nData: ${formatDateTime(rec.date) || 'N/D'}\nDurata: ${formatDuration(rec.duration) || '0:00'}`;
+  const dateTimeStr = formatDateTime(rec.date);
+  nameEl.title = `${rec.name || rec.dirName}\nData: ${dateTimeStr || 'N/D'}\nDurata: ${formatDuration(rec.duration) || '0:00'}`;
 
   const meta = document.createElement('div');
   meta.className = 'rec-item-meta';
 
-  const dateTimeStr = formatDateTime(rec.date);
   if (dateTimeStr) {
     const dtSpan = document.createElement('span');
     dtSpan.className = 'rec-meta-date';
@@ -3240,6 +3296,12 @@ function createRecordingElement(rec, folderName) {
   const actions = document.createElement('div');
   actions.className = 'rec-item-actions';
 
+  const renameBtn = document.createElement('button');
+  renameBtn.className = 'rec-action-btn';
+  renameBtn.title = 'Rinomina registrazione';
+  renameBtn.innerHTML = ICONS.edit;
+  renameBtn.onclick = (e) => { e.stopPropagation(); renameRecording(rec); };
+
   const moveBtn = document.createElement('button');
   moveBtn.className = 'rec-action-btn';
   moveBtn.title = 'Sposta in un altro gruppo';
@@ -3252,6 +3314,7 @@ function createRecordingElement(rec, folderName) {
   deleteBtn.innerHTML = ICONS.trash;
   deleteBtn.onclick = (e) => { e.stopPropagation(); confirmDeleteRecording(rec); };
 
+  actions.appendChild(renameBtn);
   actions.appendChild(moveBtn);
   actions.appendChild(deleteBtn);
 
@@ -3313,14 +3376,17 @@ async function openRecording(rec, folderName) {
   UI.transcriptContent.textContent = '';
   UI.timestampsMargin.innerHTML = '';
 
-  const result = await API.transcriptRead({ recDir: rec.recDir });
+  // Avvia le due letture in parallelo: la nota appare prima.
+  const transcriptPromise = API.transcriptRead({ recDir: rec.recDir });
+  const audioPromise = API.audioGetPath({ recDir: rec.recDir });
+
+  const result = await transcriptPromise;
 
   // Se nel frattempo l'utente ha aperto un'altra nota, scarta questa risposta.
   if (!state.activeRec || state.activeRec.recDir !== rec.recDir) return;
 
   if (result.success && result.transcript) {
     applyTranscriptResult(result);
-    await loadRevisions(rec.recDir);
   } else {
     resetTranscriptEditor();
     syncTimestampsToggle(null);
@@ -3330,7 +3396,7 @@ async function openRecording(rec, folderName) {
   updateTranscriptStatusBadge();
 
   // Carica audio nel player della barra inferiore
-  const audioResult = await API.audioGetPath({ recDir: rec.recDir });
+  const audioResult = await audioPromise;
 
   if (!state.activeRec || state.activeRec.recDir !== rec.recDir) return;
 
@@ -3413,6 +3479,25 @@ function setupModalHandlers() {
     }
   });
 
+  // Modal rinomina (gruppi e registrazioni)
+  UI.btnRenameCancel?.addEventListener('click', () => closeRenameDialog(null));
+  UI.btnRenameConfirm?.addEventListener('click', () => {
+    const value = UI.inputRename?.value.trim();
+    if (!value) { UI.inputRename?.focus(); return; }
+    closeRenameDialog(value);
+  });
+  UI.inputRename?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') UI.btnRenameConfirm?.click();
+  });
+  UI.modalRename?.addEventListener('click', (e) => {
+    if (e.target === UI.modalRename) closeRenameDialog(null);
+  });
+
+  // Doppio click sul titolo della nota per rinominarla.
+  UI.recNameLabel?.addEventListener('dblclick', () => {
+    if (state.activeRec) renameRecording(state.activeRec);
+  });
+
   // Modal Guida & Architettura (i)
   UI.btnInfo?.addEventListener('click', () => {
     UI.modalInfo?.classList.remove('hidden');
@@ -3433,7 +3518,7 @@ function setupModalHandlers() {
 }
 
 async function renameFolder(oldName) {
-  const newName = prompt(`Nuovo nome per il gruppo "${oldName}":`, oldName);
+  const newName = await openRenameDialog(`Rinomina gruppo "${oldName}"`, oldName);
   if (!newName || newName === oldName) return;
 
   const activeIsInFolder = !!state.activeRec &&
@@ -3443,6 +3528,12 @@ async function renameFolder(oldName) {
 
   const result = await API.folderRename({ oldName, newName });
   if (result.success) {
+    // Mantieni lo stato aperto/chiuso anche dopo la rinomina del gruppo.
+    if (state.folderOpenState.has(oldName)) {
+      state.folderOpenState.set(result.name, state.folderOpenState.get(oldName));
+      state.folderOpenState.delete(oldName);
+    }
+
     if (activeIsInFolder && state.activeRec) {
       const parts = state.activeRec.recDir.split('/');
       parts[parts.length - 2] = result.name;
@@ -3460,6 +3551,30 @@ async function renameFolder(oldName) {
   } else {
     showToast(result.error, 'error', 3000);
   }
+}
+
+async function renameRecording(rec) {
+  if (!rec?.recDir) return;
+  const currentName = rec.name || rec.dirName || '';
+  const newName = await openRenameDialog('Rinomina registrazione', currentName);
+  if (!newName || newName === currentName) return;
+
+  const result = await API.recordingRename({ recDir: rec.recDir, newName });
+  if (!result?.success) {
+    showToast(result?.error || 'Impossibile rinominare la registrazione', 'error', 3000);
+    return;
+  }
+
+  const savedName = result.name || newName;
+  rec.name = savedName;
+
+  if (state.activeRec && state.activeRec.recDir === rec.recDir) {
+    state.activeRec.name = savedName;
+    if (UI.recNameLabel) UI.recNameLabel.textContent = savedName;
+  }
+
+  showToast(`Registrazione rinominata in "${savedName}"`, 'success', 2000);
+  await refreshLibrary();
 }
 
 function deleteFolder(name) {

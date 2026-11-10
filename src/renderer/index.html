@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:; media-src 'self' file:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;" />
   <title>Crunch</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -89,7 +87,7 @@
 
       <div id="sidebar-footer">
         <div class="footer-row">
-          <span class="app-version" id="app-version-label">Crunch v1.0.8</span>
+          <span class="app-version" id="app-version-label">Crunch v1.2.0</span>
           <button id="btn-check-updates" class="btn-secondary btn-xs" title="Controlla aggiornamenti">
             <span class="btn-icon" id="icon-update-slot"></span>
             <span>Update</span>
@@ -270,50 +268,9 @@
           </div>
         </div>
 
-        <!-- Selettore revisione -->
-        <div id="revision-bar" class="hidden">
-          <div class="revision-picker">
-            <label for="revision-select">Revisione</label>
-            <select id="revision-select"></select>
-            <span id="revision-meta" class="revision-meta"></span>
-          </div>
-          <div id="revision-hint" class="revision-hint"></div>
-        </div>
-
         <!-- Area testo trascrizione -->
         <div id="transcript-area">
-          <!-- Editor a blocchi: overlay sopra la revisione attiva -->
-          <div id="block-editor" class="hidden">
-            <div id="editor-toolbar">
-              <div class="editor-toolbar-left">
-                <button id="btn-undo" class="editor-tool-btn" title="Annulla (⌘Z)" disabled></button>
-                <button id="btn-redo" class="editor-tool-btn" title="Ripeti (⇧⌘Z)" disabled></button>
-                <span id="editor-save-status" class="editor-save-status"></span>
-              </div>
-              <div class="editor-toolbar-right">
-                <button id="btn-add-group" class="editor-tool-btn with-label">
-                  <span class="memo-icon icon-xs" id="icon-add-group-slot"></span>
-                  <span>Nuovo gruppo</span>
-                </button>
-                <button id="btn-toggle-hidden" class="editor-tool-btn with-label" disabled>
-                  <span>Nascosti (0)</span>
-                </button>
-              </div>
-            </div>
-
-            <div id="editor-banner" class="editor-banner hidden"></div>
-            <div id="groups-bar" class="groups-bar hidden"></div>
-
-            <div id="block-list" class="block-list"></div>
-            <div id="hidden-blocks" class="hidden-blocks hidden"></div>
-
-            <div id="block-empty" class="block-empty hidden">
-              <strong>Nessun blocco visibile</strong>
-              <span>Puoi ripristinare i blocchi nascosti dal pulsante in alto.</span>
-            </div>
-          </div>
-
-          <!-- Fallback legacy / nessuna trascrizione -->
+          <!-- Blocco di testo unico, come nell'editor storico -->
           <div id="transcript-content" contenteditable="true" spellcheck="true"
                data-placeholder="La trascrizione apparirà qui. Puoi modificarla direttamente o digitare note personali."></div>
           <div id="timestamps-margin"></div>
@@ -408,6 +365,21 @@
       <div class="modal-actions">
         <button id="btn-folder-cancel" class="btn-secondary">Annulla</button>
         <button id="btn-folder-confirm" class="btn-primary">Crea Gruppo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: rinomina gruppo o registrazione -->
+  <div id="modal-rename" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-icon-header" id="modal-rename-icon-slot"></span>
+        <h3 id="rename-title">Rinomina</h3>
+      </div>
+      <input type="text" id="input-rename" placeholder="Nuovo nome..." maxlength="60" />
+      <div class="modal-actions">
+        <button id="btn-rename-cancel" class="btn-secondary">Annulla</button>
+        <button id="btn-rename-confirm" class="btn-primary">Rinomina</button>
       </div>
     </div>
   </div>

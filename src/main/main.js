@@ -1249,7 +1249,7 @@ ipcMain.handle('recording:rename', (event, { recDir, newName }) => {
     if (!safeName) return { success: false, error: 'Nome non valido' };
     updateMetadataFile(recDir, (meta) => ({ ...meta, name: safeName }));
     safeIndexRecording(recDir);
-    return { success: true };
+    return { success: true, name: safeName };
   } catch (err) {
     return { success: false, error: err.message };
   }
