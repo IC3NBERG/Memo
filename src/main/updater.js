@@ -260,9 +260,9 @@ NEW_APP="$3"
 BACKUP="$4"
 LOG="$5"
 LAUNCH="$6"
-TEMP_ROOT="$7"
-UPDATES_DIR="$8"
-ZIP_FILE="$9"
+TEMP_ROOT="\${7:-}"
+UPDATES_DIR="\${8:-}"
+ZIP_FILE="\${9:-}"
 
 exec >> "$LOG" 2>&1
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Avvio aggiornamento Crunch"

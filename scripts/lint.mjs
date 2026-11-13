@@ -17,8 +17,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_DIRS = ['src', 'test', 'scripts'];
 const IGNORED_DIRS = new Set(['node_modules', 'dist', 'bin', 'coverage', '.git', '.secrets']);
 const EXTENSIONS = new Set(['.js', '.cjs', '.mjs']);

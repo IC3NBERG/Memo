@@ -25,12 +25,13 @@ import path from 'node:path';
 import process from 'node:process';
 import { Readable } from 'node:stream';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { verifyDigestSignature } = require('../src/main/update-signature');
 
 const REPO = 'IC3NBERG/Memo';
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const skipHttp = process.argv.includes('--skip-http');
 const verifySignatures = process.argv.includes('--verify-signatures');
 const strict = process.argv.includes('--strict');

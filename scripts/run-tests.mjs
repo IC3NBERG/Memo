@@ -15,9 +15,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mode = process.argv.includes('--electron')
   ? 'electron'
   : (process.argv.includes('--e2e') ? 'e2e' : 'node');

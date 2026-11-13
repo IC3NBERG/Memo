@@ -15,7 +15,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Allowlist approvata. Ogni eccezione deve essere motivata nel documento di
 // revisione: se serve una chiave nuova, aggiornare qui e nel documento.

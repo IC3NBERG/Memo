@@ -15,8 +15,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const force = process.argv.includes('--force');
 const privateKeyPath = path.join(root, '.secrets', 'update-signing-key.pem');
 const publicKeyModule = path.join(root, 'src', 'main', 'update-public-key.js');

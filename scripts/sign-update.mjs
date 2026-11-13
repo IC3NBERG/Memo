@@ -17,12 +17,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { signatureMessage, verifyDigestSignature } = require('../src/main/update-signature');
 const { UPDATE_PUBLIC_KEY_BASE64 } = require('../src/main/update-public-key');
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function argValue(name, fallback = null) {
   const index = process.argv.indexOf(name);

@@ -12,6 +12,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { installUpdate, readAppVersion, INSTALL_SCRIPT } = require('../src/main/updater');
@@ -21,7 +22,7 @@ if (process.platform !== 'darwin') {
   process.exit(0);
 }
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = path.resolve(root, process.argv[2] || 'dist/mac-arm64/Crunch.app');
 if (!fs.existsSync(app)) {
   console.error(`Errore: bundle non trovato: ${app}`);
@@ -71,15 +72,15 @@ try {
     logPath,
     launch: false,
   });
-  waitForLog(logPath, 'Aggiornamento completato');
+  waitForLog(logPath, 'Pulizia completata');
   const installedVersion = readAppVersion(oldApp);
   if (installedVersion !== '9.9.9') {
     throw new Error(`versione installata ${installedVersion}, attesa 9.9.9`);
   }
-  if (!fs.existsSync(result.backupPath)) {
-    throw new Error('backup non creato');
+  if (fs.existsSync(result.backupPath)) {
+    throw new Error('il backup non è stato ripulito dopo l\'aggiornamento riuscito');
   }
-  console.log('smoke-updater: installazione e backup ok');
+  console.log('smoke-updater: installazione e pulizia backup ok');
 
   // Ripristino: la nuova app manca, quindi lo script deve rimettere il backup.
   const restoreApp = path.join(temp, 'restore', 'Crunch.app');
@@ -96,6 +97,9 @@ try {
     restoreBackup,
     restoreLog,
     '0',
+    path.join(temp, 'restore-temp'),
+    path.join(temp, 'restore-updates'),
+    path.join(temp, 'restore-updates', 'dummy.zip'),
   ], { encoding: 'utf8' });
   const restoreText = waitForLog(restoreLog, 'ripristino il backup');
   if (!fs.existsSync(restoreApp)) {
