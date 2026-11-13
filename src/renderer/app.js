@@ -396,24 +396,99 @@ const UI = {
   infoCpuIconSlot:     $('info-cpu-icon-slot'),
   btnInfoClose:        $('btn-info-close'),
   btnInfoOk:           $('btn-info-ok'),
+
+  // Dock Verticale Sospeso (v1.4.0)
+  btnDockRec:          $('btn-dock-rec'),
+  dockIconRecSlot:     $('dock-icon-rec-slot'),
+  btnDockHome:         $('btn-dock-home'),
+  dockIconHomeSlot:    $('dock-icon-home-slot'),
+  btnDockLibrary:      $('btn-dock-library'),
+  dockIconLibrarySlot: $('dock-icon-library-slot'),
+  btnDockSearch:       $('btn-dock-search'),
+  dockIconSearchSlot:  $('dock-icon-search-slot'),
+  btnDockEqualizer:    $('btn-dock-equalizer'),
+  dockIconEqualizerSlot: $('dock-icon-equalizer-slot'),
+  btnDockTrash:        $('btn-dock-trash'),
+  dockIconTrashSlot:   $('dock-icon-trash-slot'),
+  btnDockSettings:     $('btn-dock-settings'),
+  dockIconSettingsSlot: $('dock-icon-settings-slot'),
+
+  // Theme Switcher
+  btnThemeToggle:      $('btn-theme-toggle'),
+  themeToggleIconSlot: $('theme-toggle-icon-slot'),
+
+  // Cassetto Studio Audio DSP
+  btnToggleDspDrawer:  $('btn-toggle-dsp-drawer'),
+  bottomDspIconSlot:   $('bottom-dsp-icon-slot'),
+  dspDrawer:           $('dsp-drawer'),
+  btnCloseDspDrawer:   $('btn-close-dsp-drawer'),
+  dspDrawerIconSlot:   $('dsp-drawer-icon-slot'),
+
+  // Home Dashboard Card Buttons & Slots
+  btnDashNewGroup:     $('btn-dash-new-group'),
+  btnDashOpenDsp:      $('btn-dash-open-dsp'),
+  btnDashOpenPrivacy:  $('btn-dash-open-privacy'),
+  cardIconRecSlot:     $('card-icon-rec-slot'),
+  cardIconRecentSlot:  $('card-icon-recent-slot'),
+  cardIconGroupsSlot:  $('card-icon-groups-slot'),
+  cardIconRefineSlot:  $('card-icon-refine-slot'),
+  cardIconDspSlot:     $('card-icon-dsp-slot'),
+  cardIconVaultSlot:   $('card-icon-vault-slot'),
+  cardIconAddGroupSlot: $('card-icon-add-group-slot'),
+  cardIconSlidersSlot: $('card-icon-sliders-slot'),
+  cardIconShieldSlot:  $('card-icon-shield-slot'),
+  statIconNotesSlot:   $('stat-icon-notes-slot'),
+  statIconTimeSlot:    $('stat-icon-time-slot'),
+  statIconFoldersSlot: $('stat-icon-folders-slot'),
+  statIconEngineSlot:  $('stat-icon-engine-slot'),
 };
 
 // ══════════════════════════════════════════════════════════════
-// 1. INIEZIONE ICONE SVG AD HOC
+// 1. INIEZIONE ICONE SVG AD HOC (ZERO EMOJI)
 // ══════════════════════════════════════════════════════════════
 function injectStaticIcons() {
-  if (UI.brandIconSlot) UI.brandIconSlot.innerHTML = ICONS.mic;
+  if (UI.brandIconSlot) UI.brandIconSlot.innerHTML = ICONS.waveformLogo || ICONS.mic;
   if (UI.modelIconSlot) UI.modelIconSlot.innerHTML = ICONS.cpu;
   if (UI.updateIconSlot) UI.updateIconSlot.innerHTML = ICONS.sparkles;
   if (UI.iconInfoSlot) UI.iconInfoSlot.innerHTML = ICONS.info;
   if (UI.iconNewFolderSlot) UI.iconNewFolderSlot.innerHTML = ICONS.folderPlus;
   if (UI.searchIconSlot) UI.searchIconSlot.innerHTML = ICONS.search;
-  if (UI.iconFilterSlot) UI.iconFilterSlot.innerHTML = ICONS.sliders;
+  if (UI.iconFilterSlot) UI.iconFilterSlot.innerHTML = ICONS.filter || ICONS.sliders;
   if (UI.iconRebuildSlot) UI.iconRebuildSlot.innerHTML = ICONS.refresh;
   if (UI.iconVerifySlot) UI.iconVerifySlot.innerHTML = ICONS.shield;
   if (UI.iconTrashSlot) UI.iconTrashSlot.innerHTML = ICONS.trash;
   if (UI.iconResetViewSlot) UI.iconResetViewSlot.innerHTML = ICONS.refresh;
   if (UI.iconUpdateSlot) UI.iconUpdateSlot.innerHTML = ICONS.refresh;
+
+  // Dock Verticale Sospeso (Pierre Sù)
+  if (UI.dockIconRecSlot) UI.dockIconRecSlot.innerHTML = ICONS.mic;
+  if (UI.dockIconHomeSlot) UI.dockIconHomeSlot.innerHTML = ICONS.home;
+  if (UI.dockIconLibrarySlot) UI.dockIconLibrarySlot.innerHTML = ICONS.library;
+  if (UI.dockIconSearchSlot) UI.dockIconSearchSlot.innerHTML = ICONS.search;
+  if (UI.dockIconEqualizerSlot) UI.dockIconEqualizerSlot.innerHTML = ICONS.equalizer;
+  if (UI.dockIconTrashSlot) UI.dockIconTrashSlot.innerHTML = ICONS.trash;
+  if (UI.dockIconSettingsSlot) UI.dockIconSettingsSlot.innerHTML = ICONS.settings;
+
+  // Cassetto Studio Audio DSP
+  if (UI.bottomDspIconSlot) UI.bottomDspIconSlot.innerHTML = ICONS.equalizer;
+  if (UI.dspDrawerIconSlot) UI.dspDrawerIconSlot.innerHTML = ICONS.equalizer;
+
+  // Dashboard Statistiche
+  if (UI.statIconNotesSlot) UI.statIconNotesSlot.innerHTML = ICONS.document;
+  if (UI.statIconTimeSlot) UI.statIconTimeSlot.innerHTML = ICONS.clock;
+  if (UI.statIconFoldersSlot) UI.statIconFoldersSlot.innerHTML = ICONS.folder;
+  if (UI.statIconEngineSlot) UI.statIconEngineSlot.innerHTML = ICONS.cpu;
+
+  // Dashboard Card Grid
+  if (UI.cardIconRecSlot) UI.cardIconRecSlot.innerHTML = ICONS.mic;
+  if (UI.cardIconRecentSlot) UI.cardIconRecentSlot.innerHTML = ICONS.history;
+  if (UI.cardIconGroupsSlot) UI.cardIconGroupsSlot.innerHTML = ICONS.folder;
+  if (UI.cardIconRefineSlot) UI.cardIconRefineSlot.innerHTML = ICONS.sparkles;
+  if (UI.cardIconDspSlot) UI.cardIconDspSlot.innerHTML = ICONS.equalizer;
+  if (UI.cardIconVaultSlot) UI.cardIconVaultSlot.innerHTML = ICONS.shieldCheck || ICONS.shield;
+  if (UI.cardIconAddGroupSlot) UI.cardIconAddGroupSlot.innerHTML = ICONS.folderPlus;
+  if (UI.cardIconSlidersSlot) UI.cardIconSlidersSlot.innerHTML = ICONS.sliders;
+  if (UI.cardIconShieldSlot) UI.cardIconShieldSlot.innerHTML = ICONS.shield;
 
   if (UI.emptyIconSlot) UI.emptyIconSlot.innerHTML = ICONS.audioWave;
   if (UI.emptyRecIconSlot) UI.emptyRecIconSlot.innerHTML = ICONS.mic;
@@ -453,8 +528,38 @@ function injectStaticIcons() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 1b. GESTIONE VISTE, BANNER E STATO UI
+// 1b. GESTIONE VISTE, DOCK E TEMI
 // ══════════════════════════════════════════════════════════════
+
+function applyTheme(theme) {
+  const current = theme === 'light-warm' ? 'light-warm' : 'dark-warm';
+  if (current === 'light-warm') {
+    document.documentElement.setAttribute('data-theme', 'light-warm');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  try { localStorage.setItem('crunch-theme', current); } catch (_) {}
+  if (UI.themeToggleIconSlot) {
+    UI.themeToggleIconSlot.innerHTML = current === 'light-warm' ? ICONS.moon : ICONS.sun;
+  }
+}
+
+function initTheme() {
+  let saved = 'dark-warm';
+  try { saved = localStorage.getItem('crunch-theme') || 'dark-warm'; } catch (_) {}
+  applyTheme(saved);
+  UI.btnThemeToggle?.addEventListener('click', () => {
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light-warm';
+    applyTheme(isLight ? 'dark-warm' : 'light-warm');
+  });
+}
+
+function setDockActive(tab) {
+  document.querySelectorAll('.dock-btn').forEach(btn => btn.classList.remove('active'));
+  if (tab === 'home') UI.btnDockHome?.classList.add('active');
+  else if (tab === 'library') UI.btnDockLibrary?.classList.add('active');
+  else if (tab === 'rec') UI.btnDockRec?.classList.add('active');
+}
 
 // Garantisce che sia visibile UNA SOLA vista centrale: elimina le sovrapposizioni.
 function showMainView(view) {
@@ -465,6 +570,10 @@ function showMainView(view) {
   UI.emptyState.classList.toggle('hidden', !showEmpty);
   UI.recordingView?.classList.toggle('hidden', !showRecording);
   UI.transcriptView.classList.toggle('hidden', !showTranscript);
+
+  if (showEmpty) setDockActive('home');
+  else if (showRecording) setDockActive('rec');
+  else if (showTranscript) setDockActive('library');
 
   updateRecordingPill();
 }
@@ -602,6 +711,8 @@ function loadAppFont() {
 async function init() {
   injectStaticIcons();
   loadAppFont();
+  initTheme();
+  setupDockAndDashboard();
   setupResizer();
   setupRecControls();
   setupTranscriptControls();
@@ -728,6 +839,73 @@ function setupKeyboardNavigation() {
   UI.btnCloseNote?.addEventListener('click', closeActiveRecording);
   UI.btnEmptyNewRec?.addEventListener('click', () => {
     if (!state.recording) startRecording();
+  });
+}
+
+function setupDockAndDashboard() {
+  UI.btnDockRec?.addEventListener('click', () => {
+    if (state.recording) {
+      showMainView('recording');
+    } else {
+      startRecording();
+    }
+  });
+
+  UI.btnDockHome?.addEventListener('click', () => {
+    if (state.activeRec) {
+      closeActiveRecording();
+    } else {
+      showMainView('empty');
+    }
+  });
+
+  UI.btnDockLibrary?.addEventListener('click', () => {
+    setDockActive('library');
+    UI.libraryTree?.scrollIntoView({ behavior: 'smooth' });
+  });
+
+  UI.btnDockSearch?.addEventListener('click', () => {
+    UI.searchInput?.focus();
+    if (UI.searchFilters?.classList.contains('hidden')) {
+      UI.btnToggleFilters?.click();
+    }
+  });
+
+  UI.btnDockEqualizer?.addEventListener('click', () => {
+    UI.dspDrawer?.classList.toggle('hidden');
+    UI.btnToggleDspDrawer?.classList.toggle('active', !UI.dspDrawer?.classList.contains('hidden'));
+  });
+
+  UI.btnToggleDspDrawer?.addEventListener('click', () => {
+    UI.dspDrawer?.classList.toggle('hidden');
+    UI.btnToggleDspDrawer?.classList.toggle('active', !UI.dspDrawer?.classList.contains('hidden'));
+  });
+
+  UI.btnCloseDspDrawer?.addEventListener('click', () => {
+    UI.dspDrawer?.classList.add('hidden');
+    UI.btnToggleDspDrawer?.classList.remove('active');
+  });
+
+  UI.btnDockTrash?.addEventListener('click', () => {
+    UI.btnOpenTrash?.click();
+  });
+
+  UI.btnDockSettings?.addEventListener('click', () => {
+    UI.btnPrivacy?.click();
+  });
+
+  // Pulsanti interni alle card della dashboard
+  UI.btnDashNewGroup?.addEventListener('click', () => {
+    UI.btnNewFolder?.click();
+  });
+
+  UI.btnDashOpenDsp?.addEventListener('click', () => {
+    UI.dspDrawer?.classList.remove('hidden');
+    UI.btnToggleDspDrawer?.classList.add('active');
+  });
+
+  UI.btnDashOpenPrivacy?.addEventListener('click', () => {
+    UI.btnPrivacy?.click();
   });
 }
 

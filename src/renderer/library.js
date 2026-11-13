@@ -42,6 +42,7 @@ function renderLibrary() {
     fragment.appendChild(emptyMsg);
     UI.libraryTree.replaceChildren(fragment);
     UI.libraryTree.scrollTop = scrollTop;
+    renderDashboard();
     return;
   }
 
@@ -116,6 +117,111 @@ function renderLibrary() {
 
   UI.libraryTree.replaceChildren(fragment);
   UI.libraryTree.scrollTop = scrollTop;
+  renderDashboard();
+}
+
+function renderDashboard() {
+  const { folders, unsorted } = state.library || { folders: [], unsorted: [] };
+  const allRecordings = [];
+
+  (folders || []).forEach(f => {
+    (f.recordings || []).forEach(r => allRecordings.push({ ...r, folderName: f.name }));
+  });
+  (unsorted || []).forEach(r => allRecordings.push({ ...r, folderName: null }));
+
+  const totalNotes = allRecordings.length;
+  const totalDurationSec = allRecordings.reduce((sum, r) => sum + (r.duration || 0), 0);
+  const totalFolders = (folders || []).length;
+
+  const statNotesEl = document.getElementById('stat-total-notes');
+  const statTimeEl = document.getElementById('stat-total-time');
+  const statFoldersEl = document.getElementById('stat-total-folders');
+  const statModelEl = document.getElementById('stat-model-status');
+
+  if (statNotesEl) statNotesEl.textContent = String(totalNotes);
+  if (statTimeEl) statTimeEl.textContent = formatDuration(totalDurationSec) || '0m';
+  if (statFoldersEl) statFoldersEl.textContent = String(totalFolders);
+  if (statModelEl) statModelEl.textContent = state.modelReady ? 'Large-v3-Turbo' : 'Metal Ready';
+
+  // Ultime Lezioni (recenti)
+  const recentContainer = document.getElementById('dash-recent-list');
+  if (recentContainer) {
+    const recent = [...allRecordings]
+      .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+      .slice(0, 3);
+    if (recent.length === 0) {
+      recentContainer.innerHTML = '<span class="dash-empty-hint">Nessuna registrazione recente</span>';
+    } else {
+      recentContainer.replaceChildren();
+      recent.forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'dash-item-row';
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'dash-item-title';
+        titleSpan.textContent = r.name || r.dirName;
+        const metaSpan = document.createElement('span');
+        metaSpan.className = 'dash-item-meta';
+        metaSpan.textContent = formatDuration(r.duration) || formatDateTime(r.date);
+        row.appendChild(titleSpan);
+        row.appendChild(metaSpan);
+        row.addEventListener('click', () => openRecording(r, r.folderName));
+        recentContainer.appendChild(row);
+      });
+    }
+  }
+
+  // Gruppi & Corsi
+  const groupsContainer = document.getElementById('dash-groups-list');
+  if (groupsContainer) {
+    if (folders.length === 0) {
+      groupsContainer.innerHTML = '<span class="dash-empty-hint">Nessun gruppo creato</span>';
+    } else {
+      groupsContainer.replaceChildren();
+      folders.slice(0, 3).forEach(f => {
+        const row = document.createElement('div');
+        row.className = 'dash-item-row';
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'dash-item-title';
+        titleSpan.textContent = f.name;
+        const metaSpan = document.createElement('span');
+        metaSpan.className = 'dash-item-meta';
+        const count = (f.recordings || []).length;
+        metaSpan.textContent = `${count} ${count === 1 ? 'lezione' : 'lezioni'}`;
+        row.appendChild(titleSpan);
+        row.appendChild(metaSpan);
+        row.addEventListener('click', () => {
+          state.folderOpenState.set(f.name, true);
+          renderLibrary();
+        });
+        groupsContainer.appendChild(row);
+      });
+    }
+  }
+
+  // Da Perfezionare (Live preview / audio grezzo)
+  const refineContainer = document.getElementById('dash-refine-list');
+  if (refineContainer) {
+    const refineList = allRecordings.filter(r => r.isLivePreview || !r.hasTranscript).slice(0, 3);
+    if (refineList.length === 0) {
+      refineContainer.innerHTML = '<span class="dash-empty-hint">Tutte le note sono perfezionate</span>';
+    } else {
+      refineContainer.replaceChildren();
+      refineList.forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'dash-item-row';
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'dash-item-title';
+        titleSpan.textContent = r.name || r.dirName;
+        const metaSpan = document.createElement('span');
+        metaSpan.className = 'dash-item-meta';
+        metaSpan.textContent = r.isLivePreview ? 'Live' : 'Audio';
+        row.appendChild(titleSpan);
+        row.appendChild(metaSpan);
+        row.addEventListener('click', () => openRecording(r, r.folderName));
+        refineContainer.appendChild(row);
+      });
+    }
+  }
 }
 
 // Coalesce i ridisegni della sidebar: evita un rebuild completo a ogni tasto.
