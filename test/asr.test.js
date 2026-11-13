@@ -37,7 +37,7 @@ test('model resolver distingue model-missing e translation-model-missing', () =>
       code: models.status(false).code,
       path: models.status(false).path,
     },
-    { ready: true, code: null, path: '/models/ggml-large-v3-turbo.bin' },
+    { ready: true, code: null, path: path.join('/models', 'ggml-large-v3-turbo.bin') },
   );
 
   assert.equal(models.status(true).code, TRANSLATION_MODEL_MISSING);
@@ -46,13 +46,14 @@ test('model resolver distingue model-missing e translation-model-missing', () =>
 });
 
 test('model resolver preferisce il modello legacy se il primario manca', () => {
+  const legacyPath = path.join('/old/.models', 'ggml-large-v3-turbo.bin');
   const models = createModelResolver({
     modelsDir: '/models',
     legacyModelsDir: '/old/.models',
-    exists: (file) => file === '/old/.models/ggml-large-v3-turbo.bin',
+    exists: (file) => file === legacyPath,
   });
   assert.equal(models.status(false).ready, true);
-  assert.equal(models.status(false).path, '/old/.models/ggml-large-v3-turbo.bin');
+  assert.equal(models.status(false).path, legacyPath);
 });
 
 test('il servizio ASR restituisce i codici model-missing senza toccare i backend', async () => {
@@ -130,7 +131,7 @@ test('il servizio ASR prewarm usa il modello tradotto quando richiesto', async (
   });
 
   assert.deepEqual(await service.prewarm({ translate: true }), { success: true, engine: 'fake' });
-  assert.deepEqual(seen, ['/models/ggml-medium.bin']);
+  assert.deepEqual(seen, [path.join('/models', 'ggml-medium.bin')]);
 });
 
 test('parseWhisperCliJson converte offset ms in secondi e ricompone le parole', () => {
