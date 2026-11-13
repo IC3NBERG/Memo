@@ -45,11 +45,6 @@ jobs:
     timeout-minutes: 50
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12 }}
-      CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
     steps:
       - name: Checkout code
@@ -65,6 +60,12 @@ jobs:
 
       - name: Verifica credenziali di firma
         if: vars.REQUIRE_SIGNED_RELEASE == 'true'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK || secrets.MAC_CERTIFICATE_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD || secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           test -n "${CSC_LINK:-}" || { echo "CSC_LINK mancante"; exit 1; }
           test -n "${CSC_KEY_PASSWORD:-}" || { echo "CSC_KEY_PASSWORD mancante"; exit 1; }
@@ -94,7 +95,23 @@ jobs:
         run: npm run build-whisper
 
       - name: Build app
-        run: npx electron-builder --mac --publish never
+        env:
+          CSC_LINK_RAW: ${{ secrets.CSC_LINK || secrets.MAC_CERTIFICATE_P12 }}
+          CSC_KEY_PASSWORD_RAW: ${{ secrets.CSC_KEY_PASSWORD || secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_ID_RAW: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID_RAW: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD_RAW: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          if [ -n "${CSC_LINK_RAW:-}" ]; then
+            export CSC_LINK="${CSC_LINK_RAW}"
+            export CSC_KEY_PASSWORD="${CSC_KEY_PASSWORD_RAW:-}"
+          fi
+          if [ -n "${APPLE_ID_RAW:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD_RAW:-}" ]; then
+            export APPLE_ID="${APPLE_ID_RAW}"
+            export APPLE_TEAM_ID="${APPLE_TEAM_ID_RAW:-}"
+            export APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD_RAW}"
+          fi
+          npx electron-builder --mac --publish never
 
       - name: Smoke test firma, avvio, aggiornamento e ripristino
         env:
