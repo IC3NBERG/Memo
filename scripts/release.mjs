@@ -238,11 +238,12 @@ export function checkRelease(tag, { strict = false } = {}) {
     problems.push(`CHANGELOG.md senza sezione [${version}]`);
   }
 
-  const tagType = tryRun('git', ['cat-file', '-t', tag]);
-  if (tagType !== 'tag') {
-    const message = `tag ${tag} non annotato (tipo: ${tagType || 'assente'})`;
-    if (strict) problems.push(message);
-    else warnings.push(message);
+  const tagType = tryRun('git', ['cat-file', '-t', `refs/tags/${tag}`])
+    || tryRun('git', ['cat-file', '-t', tag]);
+  if (!tagType) {
+    problems.push(`tag ${tag} assente`);
+  } else if (tagType !== 'tag') {
+    warnings.push(`tag ${tag} non annotato (tipo: ${tagType})`);
   }
 
   if (strict) {

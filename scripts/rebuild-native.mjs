@@ -57,4 +57,13 @@ const result = spawnSync(process.execPath, [
   env: { ...process.env, PYTHON: python },
 });
 
-process.exit(result.status ?? 1);
+if (result.status !== 0) {
+  if (process.env.npm_lifecycle_event === 'postinstall') {
+    console.warn('\nAvviso: ricompilazione better-sqlite3 per Electron non riuscita durante postinstall.');
+    console.warn('Questo e normale su sistemi (es. Windows in CI) privi della toolchain C++ completa per Electron.');
+    process.exit(0);
+  }
+  process.exit(result.status ?? 1);
+}
+
+process.exit(0);

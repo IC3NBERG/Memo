@@ -33,8 +33,8 @@ jobs:
       - name: Revisione entitlements
         run: node scripts/verify-entitlements.mjs
 
-      - name: Fetch main per il controllo del tag
-        run: git fetch --no-tags origin main
+      - name: Fetch main e tag per il controllo della release
+        run: git fetch --tags --force origin main:origin/main || git fetch --tags --force origin main
 
       - name: Versione, tag e changelog coerenti
         run: node scripts/release.mjs check --tag "${GITHUB_REF_NAME}" --strict
