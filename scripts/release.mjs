@@ -216,7 +216,7 @@ export function changelogSection(version) {
   return text.slice(match.index, next === -1 ? text.length : next).trim();
 }
 
-export function checkRelease(tag, { strict = false } = {}) {
+export function checkRelease(tag, { strict = false, requireTag = true } = {}) {
   const problems = [];
   const warnings = [];
   if (!tag || !/^v\d+\.\d+\.\d+$/.test(tag)) {
@@ -238,15 +238,17 @@ export function checkRelease(tag, { strict = false } = {}) {
     problems.push(`CHANGELOG.md senza sezione [${version}]`);
   }
 
-  const tagType = tryRun('git', ['cat-file', '-t', `refs/tags/${tag}`])
-    || tryRun('git', ['cat-file', '-t', tag]);
-  if (!tagType) {
-    problems.push(`tag ${tag} assente`);
-  } else if (tagType !== 'tag') {
-    warnings.push(`tag ${tag} non annotato (tipo: ${tagType})`);
+  if (requireTag) {
+    const tagType = tryRun('git', ['cat-file', '-t', `refs/tags/${tag}`])
+      || tryRun('git', ['cat-file', '-t', tag]);
+    if (!tagType) {
+      problems.push(`tag ${tag} assente`);
+    } else if (tagType !== 'tag') {
+      warnings.push(`tag ${tag} non annotato (tipo: ${tagType})`);
+    }
   }
 
-  if (strict) {
+  if (strict && requireTag) {
     const main = tryRun('git', ['rev-parse', '--verify', 'origin/main']);
     if (main && tryRun('git', ['merge-base', '--is-ancestor', tag, 'origin/main']) === null) {
       problems.push(`tag ${tag} non punta a un commit di origin/main`);

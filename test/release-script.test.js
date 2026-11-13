@@ -41,6 +41,15 @@ test('formatEntries raggruppa i commit convenzionali e ignora le release', async
 test('il changelog corrente contiene la versione del package', async () => {
   const { checkRelease, readVersions } = await import('../scripts/release.mjs');
   const versions = readVersions();
-  const result = checkRelease(`v${versions.package}`);
+  const result = checkRelease(`v${versions.package}`, { requireTag: false });
   assert.deepEqual(result.problems, []);
+});
+
+test('checkRelease segnala tag assente solo quando requireTag è true', async () => {
+  const { checkRelease } = await import('../scripts/release.mjs');
+  const noTagResult = checkRelease('v999.999.999', { requireTag: false });
+  assert.ok(!noTagResult.problems.includes('tag v999.999.999 assente'));
+
+  const withTagResult = checkRelease('v999.999.999', { requireTag: true });
+  assert.ok(withTagResult.problems.includes('tag v999.999.999 assente'));
 });
