@@ -245,6 +245,38 @@
     return next;
   }
 
+  /**
+   * Un overlay è "vuoto" quando non contiene nessuna modifica dell'utente.
+   * I metadati di allineamento (revisionId, sourceHash, editRevision) non
+   * contano: servono solo a validare e versionare il documento.
+   */
+  function hasOverlayContent(edits) {
+    if (!edits || typeof edits !== 'object') return false;
+    return Object.keys(edits.segmentText || {}).length > 0
+      || (edits.hiddenSegmentIds || []).length > 0
+      || Object.keys(edits.tags || {}).length > 0
+      || Object.keys(edits.annotations || {}).length > 0
+      || Array.isArray(edits.order)
+      || (edits.groups || []).length > 0
+      || typeof edits.legacyDocumentText === 'string';
+  }
+
+  /**
+   * Riporta l'overlay allo stato originale preservando i metadati di
+   * allineamento. `editRevision` viene incrementata dal main al salvataggio.
+   */
+  function resetOverlay(edits) {
+    const next = cloneEdits(edits);
+    next.segmentText = {};
+    next.hiddenSegmentIds = [];
+    next.tags = {};
+    next.annotations = {};
+    next.order = null;
+    next.groups = [];
+    delete next.legacyDocumentText;
+    return next;
+  }
+
   function hasLegacyText(edits) {
     return typeof edits?.legacyDocumentText === 'string';
   }
@@ -265,6 +297,7 @@
     deleteGroup,
     groupsForSegment,
     hasLegacyText,
+    hasOverlayContent,
     hiddenBlocks,
     isHidden,
     moveSegment,
@@ -276,6 +309,7 @@
     removeAnnotation,
     removeTag,
     renameGroup,
+    resetOverlay,
     segmentTextFor,
     setHidden,
     setSegmentText,

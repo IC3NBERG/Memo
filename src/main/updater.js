@@ -2,15 +2,18 @@
 
 // ─── Aggiornamento manuale per build macOS non firmate ────────────────────
 // Squirrel.Mac rifiuta le build ad-hoc/unsigned. Questo modulo scarica lo ZIP
-// della release, ne verifica lo SHA-512 e sostituisce l'app tramite uno script
-// che attende la chiusura di Crunch, conserva un backup e riapre la nuova app.
+// della release, ne verifica SHA-512 e firma Ed25519, poi sostituisce l'app
+// tramite uno script che attende la chiusura di Crunch, conserva un backup e
+// riapre la nuova app.
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
+const { verifyDigestSignature } = require('./update-signature');
 
 const RELEASES_URL = 'https://github.com/IC3NBERG/Memo/releases/latest';
 
@@ -25,15 +28,22 @@ function getAppBundlePath(exePath) {
   }
 }
 
-// Una build firmata con Developer ID può usare Squirrel; ad-hoc no.
+// Una build firmata con Developer ID e con firma valida può usare Squirrel.
+// Ad-hoc o non firmate passano dall'updater interno.
 function isDeveloperIdSigned(appBundlePath) {
   if (!appBundlePath) return false;
   try {
-    const res = spawnSync('codesign', ['-dv', '--verbose=2', appBundlePath], {
+    const info = spawnSync('codesign', ['-dv', '--verbose=2', appBundlePath], {
       encoding: 'utf8',
     });
-    const output = `${res.stdout || ''}\n${res.stderr || ''}`;
-    return res.status === 0 && /Authority=Developer ID Application/.test(output);
+    const output = `${info.stdout || ''}\n${info.stderr || ''}`;
+    if (info.status !== 0 || !/Authority=Developer ID Application/.test(output)) {
+      return false;
+    }
+    const verify = spawnSync('codesign', ['--verify', '--deep', '--strict', appBundlePath], {
+      encoding: 'utf8',
+    });
+    return verify.status === 0;
   } catch (_) {
     return false;
   }
@@ -56,6 +66,63 @@ async function fileMatchesSha512(filePath, expected) {
   } catch (_) {
     return false;
   }
+}
+
+function verifyUpdateFile(filePath, expectedSha512, signatureText, publicKeyBase64) {
+  return sha512File(filePath).then((digest) => {
+    if (expectedSha512 && digest !== expectedSha512) return { ok: false, sha512: digest };
+    return {
+      ok: verifyDigestSignature(digest, signatureText, publicKeyBase64),
+      sha512: digest,
+    };
+  });
+}
+
+function httpClientFor(url) {
+  return String(url).startsWith('http:') ? http : https;
+}
+
+function downloadText(url, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirects > 6) {
+      reject(new Error('Troppi redirect durante il download della firma'));
+      return;
+    }
+
+    const req = httpClientFor(url).get(url, {
+      headers: { 'User-Agent': 'Crunch-Updater' },
+    }, (res) => {
+      if ([301, 302, 307, 308].includes(res.statusCode)) {
+        res.resume();
+        const location = res.headers.location;
+        if (!location) {
+          reject(new Error('Redirect senza destinazione'));
+          return;
+        }
+        downloadText(new URL(location, url).toString(), redirects + 1).then(resolve, reject);
+        return;
+      }
+
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`Download firma fallito (HTTP ${res.statusCode})`));
+        return;
+      }
+
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        body += chunk;
+        if (body.length > 64 * 1024) {
+          res.destroy(new Error('Firma troppo grande'));
+        }
+      });
+      res.on('end', () => resolve(body.trim()));
+      res.on('error', reject);
+    });
+
+    req.on('error', reject);
+  });
 }
 
 function downloadFile({ url, dest, sha512, onProgress, redirects = 0 }) {
@@ -91,7 +158,7 @@ function downloadFile({ url, dest, sha512, onProgress, redirects = 0 }) {
     let received = 0;
     let total = 0;
 
-    const req = https.get(url, {
+    const req = httpClientFor(url).get(url, {
       headers: { 'User-Agent': 'Crunch-Updater' },
     }, (res) => {
       if ([301, 302, 307, 308].includes(res.statusCode)) {
@@ -146,7 +213,7 @@ function downloadFile({ url, dest, sha512, onProgress, redirects = 0 }) {
           }
           try {
             fs.renameSync(tmpPath, dest);
-            resolve(dest);
+            resolve({ path: dest, sha512: digest });
           } catch (err) {
             fail(err);
           }
@@ -193,6 +260,9 @@ NEW_APP="$3"
 BACKUP="$4"
 LOG="$5"
 LAUNCH="$6"
+TEMP_ROOT="$7"
+UPDATES_DIR="$8"
+ZIP_FILE="$9"
 
 exec >> "$LOG" 2>&1
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Avvio aggiornamento Crunch"
@@ -229,6 +299,30 @@ fi
 # Evita che Gatekeeper blocchi la nuova build non notarizzata
 xattr -dr com.apple.quarantine "$APP" >/dev/null 2>&1 || true
 echo "Aggiornamento completato"
+
+# ─── Pulizia post-installazione ────────────────────────────────────────────
+# Elimina il backup della vecchia versione (non serve più)
+rm -rf "$BACKUP" 2>/dev/null && echo "Backup rimosso: $BACKUP"
+
+# Elimina la cartella temporanea di estrazione
+rm -rf "$TEMP_ROOT" 2>/dev/null && echo "Temp rimosso: $TEMP_ROOT"
+
+# Elimina TUTTI gli installer (.zip, .sig, .part) dalla cartella degli aggiornamenti
+if [ -n "$UPDATES_DIR" ] && [ -d "$UPDATES_DIR" ]; then
+  rm -f "$UPDATES_DIR"/*.zip "$UPDATES_DIR"/*.sig "$UPDATES_DIR"/*.part 2>/dev/null
+  echo "Installer rimossi dalla cartella updates: $UPDATES_DIR"
+fi
+
+# Elimina vecchi backup o cartelle temporanee rimaste in os.tmpdir() e /tmp
+BACKUP_PARENT="$(dirname "$BACKUP")"
+if [ -n "$BACKUP_PARENT" ] && [ -d "$BACKUP_PARENT" ]; then
+  find "$BACKUP_PARENT" -maxdepth 1 -name "Crunch-backup-*.app" -type d -exec rm -rf {} + 2>/dev/null
+  find "$BACKUP_PARENT" -maxdepth 1 -name "crunch-update-*" -type d -exec rm -rf {} + 2>/dev/null
+fi
+find /tmp -maxdepth 1 -name "Crunch-backup-*.app" -type d -exec rm -rf {} + 2>/dev/null
+find /tmp -maxdepth 1 -name "crunch-update-*" -type d -exec rm -rf {} + 2>/dev/null
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pulizia completata"
 
 if [ "$LAUNCH" = "1" ]; then
   open "$APP" || echo "Riapertura fallita"
@@ -270,6 +364,8 @@ function installUpdate({
   const scriptPath = path.join(tempRoot, 'install.sh');
   const finalLogPath = logPath || path.join(tempRoot, 'install.log');
 
+  const updatesDir = path.dirname(zipPath);
+
   fs.mkdirSync(path.dirname(finalLogPath), { recursive: true });
   fs.writeFileSync(scriptPath, INSTALL_SCRIPT, { mode: 0o755 });
 
@@ -281,6 +377,9 @@ function installUpdate({
     backupPath,
     finalLogPath,
     launch ? '1' : '0',
+    tempRoot,
+    updatesDir,
+    zipPath,
   ], {
     detached: true,
     stdio: 'ignore',
@@ -292,10 +391,14 @@ function installUpdate({
 
 module.exports = {
   RELEASES_URL,
+  INSTALL_SCRIPT,
   getAppBundlePath,
   isDeveloperIdSigned,
+  sha512File,
   fileMatchesSha512,
+  verifyUpdateFile,
   downloadFile,
+  downloadText,
   extractApp,
   readAppVersion,
   installUpdate,

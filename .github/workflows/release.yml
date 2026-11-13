@@ -7,28 +7,111 @@ on:
 
 permissions:
   contents: write
+  actions: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: macos-latest
+  verify:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+
+      - name: Lint
+        run: node scripts/lint.mjs
+
+      - name: Revisione entitlements
+        run: node scripts/verify-entitlements.mjs
+
+      - name: Fetch main per il controllo del tag
+        run: git fetch --no-tags origin main
+
+      - name: Versione, tag e changelog coerenti
+        run: node scripts/release.mjs check --tag "${GITHUB_REF_NAME}" --strict
+
+  release:
+    needs: verify
+    runs-on: macos-latest
+    timeout-minutes: 50
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12 }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
           cache: 'npm'
+
+      - name: Verifica credenziali di firma
+        if: vars.REQUIRE_SIGNED_RELEASE == 'true'
+        run: |
+          test -n "${CSC_LINK:-}" || { echo "CSC_LINK mancante"; exit 1; }
+          test -n "${CSC_KEY_PASSWORD:-}" || { echo "CSC_KEY_PASSWORD mancante"; exit 1; }
+          test -n "${APPLE_ID:-}" || { echo "APPLE_ID mancante"; exit 1; }
+          test -n "${APPLE_TEAM_ID:-}" || { echo "APPLE_TEAM_ID mancante"; exit 1; }
+          test -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" || { echo "APPLE_APP_SPECIFIC_PASSWORD mancante"; exit 1; }
+
+      - name: Verifica chiave di firma aggiornamenti
+        run: test -n "${UPDATE_SIGNING_KEY:-}" || { echo "UPDATE_SIGNING_KEY mancante"; exit 1; }
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit test
+        run: npm test
+
+      - name: Test con l'ABI di Electron
+        run: npm run test:electron
+
+      - name: Revisione entitlements
+        run: npm run verify-entitlements
+
       - name: Build Whisper C++ with Metal
         run: npm run build-whisper
 
-      - name: Build & Publish Electron App
-        run: npx electron-builder --mac --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build app
+        run: npx electron-builder --mac --publish never
 
+      - name: Smoke test firma, avvio, aggiornamento e ripristino
+        env:
+          REQUIRE_SIGNED: ${{ vars.REQUIRE_SIGNED_RELEASE || '0' }}
+          REQUIRE_NOTARIZED: ${{ vars.REQUIRE_SIGNED_RELEASE || '0' }}
+        run: bash scripts/smoke-release.sh dist/mac-arm64/Crunch.app
+
+      - name: Firma il pacchetto di aggiornamento
+        run: |
+          ZIP=$(ls dist/*-arm64-mac.zip | head -n 1)
+          node scripts/sign-update.mjs --zip "$ZIP"
+
+      - name: Genera le note della release
+        run: node scripts/release.mjs notes --tag "${GITHUB_REF_NAME}" > release-notes.md
+
+      - name: Pubblica la release
+        run: bash scripts/publish-release.sh "${GITHUB_REF_NAME}" release-notes.md
+
+      - name: Verifica la release pubblicata
+        run: npm run verify-releases -- --tag "${GITHUB_REF_NAME}" --strict --verify-signatures

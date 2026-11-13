@@ -77,6 +77,51 @@ test('tag e annotazioni sono deduplicati e rimovibili', () => {
   assert.deepEqual(overlay.tags, {});
 });
 
+test('hasOverlayContent riconosce ogni parte dell’overlay e ignora i metadati', () => {
+  assert.equal(model.hasOverlayContent(null), false);
+  assert.equal(model.hasOverlayContent({ segmentText: {}, hiddenSegmentIds: [], tags: {}, annotations: {}, order: null, groups: [] }), false);
+  assert.equal(model.hasOverlayContent({ revisionId: 'r1', sourceHash: 'abc', editRevision: 3 }), false);
+  assert.equal(model.hasOverlayContent(edits({ segmentText: { 'r1-s0001': 'x' } })), true);
+  assert.equal(model.hasOverlayContent(edits({ hiddenSegmentIds: ['r1-s0001'] })), true);
+  assert.equal(model.hasOverlayContent(edits({ tags: { 'r1-s0001': ['x'] } })), true);
+  assert.equal(model.hasOverlayContent(edits({ annotations: { 'r1-s0001': [{ id: 'a1' }] } })), true);
+  assert.equal(model.hasOverlayContent(edits({ order: ['r1-s0001'] })), true);
+  assert.equal(model.hasOverlayContent(edits({ groups: [{ id: 'g1', segmentIds: [] }] })), true);
+  assert.equal(model.hasOverlayContent({ legacyDocumentText: 'testo' }), true);
+});
+
+test('resetOverlay azzera tutte le viste e preserva i metadati di allineamento', () => {
+  const overlay = edits({
+    revisionId: 'r1',
+    sourceHash: 'hash',
+    editRevision: 4,
+    segmentText: { 'r1-s0001': 'corretto' },
+    hiddenSegmentIds: ['r1-s0002'],
+    tags: { 'r1-s0001': ['importante'] },
+    annotations: { 'r1-s0001': [{ id: 'a1', text: 'nota' }] },
+    order: ['r1-s0002', 'r1-s0001'],
+    groups: [{ id: 'g1', title: 'Gruppo', segmentIds: ['r1-s0001'] }],
+    legacyDocumentText: 'testo legacy',
+  });
+
+  const clean = model.resetOverlay(overlay);
+  assert.deepEqual(clean.segmentText, {});
+  assert.deepEqual(clean.hiddenSegmentIds, []);
+  assert.deepEqual(clean.tags, {});
+  assert.deepEqual(clean.annotations, {});
+  assert.equal(clean.order, null);
+  assert.deepEqual(clean.groups, []);
+  assert.equal(clean.legacyDocumentText, undefined);
+  assert.equal(clean.revisionId, 'r1');
+  assert.equal(clean.sourceHash, 'hash');
+  assert.equal(clean.editRevision, 4);
+  assert.equal(model.hasOverlayContent(clean), false);
+
+  // L'overlay di partenza non viene mutato.
+  assert.equal(overlay.segmentText['r1-s0001'], 'corretto');
+  assert.equal(overlay.legacyDocumentText, 'testo legacy');
+});
+
 test('i gruppi sono nomi condivisi e un segmento può stare in più gruppi', () => {
   let overlay = model.createGroup(edits(), 'Introduzione', { id: 'g1' });
   overlay = model.createGroup(overlay, 'Esame', { id: 'g2' });

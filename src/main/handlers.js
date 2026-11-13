@@ -128,6 +128,21 @@ function createEditsSaveHandler({ pathGuard, store }) {
   };
 }
 
+function createEditsResetHandler({ pathGuard, store }) {
+  return (payload = {}) => {
+    try {
+      const { recDir } = payload;
+      if (!pathGuard.isValidRecordingDir(recDir)) {
+        return { success: false, error: 'Registrazione non valida' };
+      }
+
+      return store.resetOverlay(recDir);
+    } catch (err) {
+      return { success: false, error: err.message, code: err.code };
+    }
+  };
+}
+
 function createRevisionCreateHandler({ pathGuard, store }) {
   return (payload = {}) => {
     try {
@@ -171,7 +186,10 @@ function createSearchHandler({ getIndex }) {
         };
       }
 
-      const results = index.search(String(payload.query ?? ''), { limit: payload.limit });
+      const results = index.search(String(payload.query ?? ''), {
+        limit: payload.limit,
+        filters: payload.filters,
+      });
       return {
         success: true,
         results: results.map((row) => ({
@@ -185,12 +203,32 @@ function createSearchHandler({ getIndex }) {
   };
 }
 
+function createSearchFacetsHandler({ getIndex }) {
+  return () => {
+    try {
+      const index = getIndex();
+      if (!index) {
+        return {
+          success: false,
+          code: 'index-unavailable',
+          error: 'Indice di ricerca non disponibile',
+        };
+      }
+      return { success: true, ...index.facets() };
+    } catch (err) {
+      return { success: false, error: err.message, code: err.code };
+    }
+  };
+}
+
 module.exports = {
+  createEditsResetHandler,
   createEditsSaveHandler,
   createRecordingSaveHandler,
   createRevisionCreateHandler,
   createRevisionListHandler,
   createRevisionSwitchHandler,
+  createSearchFacetsHandler,
   createSearchHandler,
   createTranscriptReadHandler,
   createTranscriptSaveHandler,

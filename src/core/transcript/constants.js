@@ -5,7 +5,7 @@ const SCHEMA_VERSIONS = Object.freeze({
   transcript: 2,
   edits: 1,
   manifest: 1,
-  searchIndex: 1,
+  searchIndex: 2,
 });
 
 const TRANSCRIPT_KINDS = Object.freeze([

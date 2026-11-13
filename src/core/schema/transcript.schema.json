@@ -32,7 +32,8 @@
           "id": { "type": "string", "pattern": "^r[1-9][0-9]*-s[0-9]{4,}$" },
           "start": { "type": "number", "minimum": 0 },
           "end": { "type": "number", "minimum": 0 },
-          "text": { "type": "string" }
+          "text": { "type": "string" },
+          "speaker": { "type": ["string", "null"] }
         },
         "additionalProperties": true
       }

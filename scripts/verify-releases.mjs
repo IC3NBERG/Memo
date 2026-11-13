@@ -5,6 +5,7 @@
 //   - che il tag esista anche sul remoto e punti a un commit su main;
 //   - che la release non sia una bozza o un prerelease;
 //   - che siano presenti DMG, ZIP, i due blockmap e latest-mac.yml;
+//   - per le release dalla 1.3.0, anche la firma Ed25519 dello ZIP;
 //   - che latest-mac.yml dichiari la versione del tag e le dimensioni corrette;
 //   - che DMG e ZIP siano raggiungibili (HTTP 200).
 //
@@ -13,14 +14,52 @@
 // Uso:
 //   npm run verify-releases
 //   npm run verify-releases -- --skip-http
+//   npm run verify-releases -- --tag v1.3.0 --strict --verify-signatures
+//
+// Con --verify-signatures scarica lo ZIP e verifica crittograficamente la
+// firma rispetto alla chiave pubblica incorporata nell'app.
 
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
+import { Readable } from 'node:stream';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { verifyDigestSignature } = require('../src/main/update-signature');
 
 const REPO = 'IC3NBERG/Memo';
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const skipHttp = process.argv.includes('--skip-http');
+const verifySignatures = process.argv.includes('--verify-signatures');
+const strict = process.argv.includes('--strict');
+
+function argValue(name) {
+  const index = process.argv.indexOf(name);
+  if (index === -1) return null;
+  return process.argv[index + 1] || null;
+}
+
+const onlyTag = argValue('--tag');
+
+// Le release precedenti alla firma Ed25519 non possono avere `.sig`.
+const SIGNATURE_MIN_VERSION = '1.2.0';
+
+function parseVersion(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version || '');
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function versionGreaterThan(version, threshold) {
+  const left = parseVersion(version);
+  const right = parseVersion(threshold);
+  if (!left || !right) return false;
+  for (let i = 0; i < 3; i++) {
+    if (left[i] !== right[i]) return left[i] > right[i];
+  }
+  return false;
+}
 
 function run(cmd, args, options = {}) {
   return execFileSync(cmd, args, {
@@ -60,6 +99,12 @@ function parseManifest(text) {
     if (urlMatch) {
       current = { url: urlMatch[1].trim() };
       files.push(current);
+      continue;
+    }
+
+    const shaMatch = line.match(/^\s*sha512:\s*(\S+)$/);
+    if (shaMatch && current) {
+      current.sha512 = shaMatch[1].trim().replace(/^['"]|['"]$/g, '');
       continue;
     }
 
@@ -110,13 +155,37 @@ async function headStatus(url) {
   }
 }
 
+async function sha512Url(url) {
+  const res = await fetchWithRetry(url, { redirect: 'follow' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.body) throw new Error('corpo della risposta assente');
+  const hash = crypto.createHash('sha512');
+  for await (const chunk of Readable.fromWeb(res.body)) {
+    hash.update(chunk);
+  }
+  return hash.digest('base64');
+}
+
+async function textUrl(url) {
+  const res = await fetchWithRetry(url, { redirect: 'follow' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.text()).trim();
+}
+
 async function main() {
   const tagsResult = tryRun('git', ['tag', '--list', 'v*', '--sort=v:refname']);
   if (!tagsResult.ok || !tagsResult.out) {
     console.error('Errore: nessun tag v* trovato nel repository.');
     process.exit(1);
   }
-  const tags = tagsResult.out.split(/\r?\n/).filter(Boolean);
+  let tags = tagsResult.out.split(/\r?\n/).filter(Boolean);
+  if (onlyTag) {
+    tags = tags.filter((tag) => tag === onlyTag);
+    if (tags.length === 0) {
+      console.error(`Errore: tag ${onlyTag} non trovato.`);
+      process.exit(1);
+    }
+  }
 
   const runsResult = tryRun('gh', [
     'run', 'list', '--workflow=release.yml', '--limit', '100',
@@ -151,6 +220,15 @@ async function main() {
     const version = tag.replace(/^v/, '');
     const problems = [];
     const notes = [];
+    const needsSignature = versionGreaterThan(version, SIGNATURE_MIN_VERSION);
+    const expectedAssets = needsSignature ? 6 : 5;
+
+    if (strict && needsSignature) {
+      const tagType = tryRun('git', ['cat-file', '-t', tag]);
+      if (!tagType.ok || tagType.out !== 'tag') {
+        problems.push('tag non annotato');
+      }
+    }
 
     const commitResult = tryRun('git', ['rev-list', '-n1', tag]);
     const commit = commitResult.ok ? commitResult.out : '';
@@ -169,7 +247,7 @@ async function main() {
     let assets = [];
     const releaseResult = tryRun('gh', [
       'release', 'view', tag,
-      '--json', 'isDraft,isPrerelease,assets',
+      '--json', 'isDraft,isPrerelease,assets,body',
     ]);
 
     if (!releaseResult.ok) {
@@ -179,6 +257,9 @@ async function main() {
       assets = release.assets || [];
       if (release.isDraft) problems.push('release in bozza');
       if (release.isPrerelease) problems.push('release prerelease');
+      if (strict && needsSignature && !(release.body || '').trim()) {
+        problems.push('note della release vuote');
+      }
 
       const required = [
         ['-arm64.dmg', 'DMG'],
@@ -186,6 +267,7 @@ async function main() {
         ['-arm64.dmg.blockmap', 'blockmap DMG'],
         ['-arm64-mac.zip.blockmap', 'blockmap ZIP'],
       ];
+      if (needsSignature) required.push(['-arm64-mac.zip.sig', 'firma Ed25519']);
 
       for (const [suffix, label] of required) {
         const matches = assetMatches(assets, suffix);
@@ -225,6 +307,29 @@ async function main() {
       }
     }
 
+    if (needsSignature && verifySignatures) {
+      const zipFile = manifest?.files.find((file) => /-arm64-mac\.zip$/.test(file.url));
+      if (!zipFile) {
+        problems.push('manifest senza ZIP per la verifica della firma');
+      } else {
+        const zipUrl = `https://github.com/${REPO}/releases/download/${tag}/${encodeURIComponent(zipFile.url)}`;
+        try {
+          const signature = await textUrl(`${zipUrl}.sig`);
+          const digest = await sha512Url(zipUrl);
+          if (zipFile.sha512 && digest !== zipFile.sha512) {
+            problems.push('SHA-512 remoto diverso dal manifest');
+          }
+          if (!verifyDigestSignature(digest, signature)) {
+            problems.push('firma Ed25519 non valida');
+          } else {
+            notes.push('firma Ed25519 valida');
+          }
+        } catch (err) {
+          problems.push(`verifica firma fallita (${err.message})`);
+        }
+      }
+    }
+
     if (!skipHttp) {
       for (const asset of assets) {
         if (!/\.(dmg|zip)$/.test(asset.name)) continue;
@@ -252,7 +357,7 @@ async function main() {
       tag,
       commit: shortCommit,
       ci: ciLabel,
-      assets: `${assets.length}/5`,
+      assets: `${assets.length}/${expectedAssets}`,
       result: problems.length ? `ERRORE: ${problems.join('; ')}` : 'ok',
       notes,
     });

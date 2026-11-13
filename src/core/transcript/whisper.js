@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const transcriptStore = require('./store');
+const { buildWhisperArgs } = require('../asr/backends/whisper-cli');
 
 const STAGING_PREFIX = '.tmp-whisper-';
 
@@ -29,21 +30,6 @@ function cleanupStaging(stagingDir) {
 
 function whisperOutputPrefix(stagingDir) {
   return path.join(stagingDir, 'audio');
-}
-
-function buildWhisperArgs({ modelPath, outputPrefix, audioPath, language, translate }) {
-  const args = [
-    '--model', modelPath,
-    '--output-file', outputPrefix,
-    '--output-json',
-    '--output-txt',
-    '--print-progress',
-    '--file', audioPath,
-    '--threads', '4',
-    '--language', language || 'auto',
-  ];
-  if (translate) args.push('--translate');
-  return args;
 }
 
 /**

@@ -7,6 +7,8 @@ const path = require('path');
 
 const {
   createRecordingSaveHandler,
+  createSearchFacetsHandler,
+  createSearchHandler,
   createTranscriptReadHandler,
   createTranscriptSaveHandler,
 } = require('../src/main/handlers');
@@ -167,4 +169,56 @@ test('transcript:save aggiorna l’overlay senza toccare la sorgente', () => {
   } finally {
     cleanup(root);
   }
+});
+
+test('search:query inoltra i filtri e converte lo snippet in parti sicure', () => {
+  const calls = [];
+  const handler = createSearchHandler({
+    getIndex: () => ({
+      search(query, options) {
+        calls.push({ query, options });
+        return [{
+          recId: '/archive/Lezione',
+          name: 'Lezione',
+          folder: 'Università',
+          matchStart: 42,
+          snippet: 'prima \u0001parola\u0002 dopo',
+          score: -1.5,
+        }];
+      },
+    }),
+  });
+
+  const filters = { folder: 'Università', speaker: 'Mario', durationMin: 60 };
+  const result = handler({ query: 'parola', limit: 10, filters });
+
+  assert.equal(result.success, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].query, 'parola');
+  assert.equal(calls[0].options.limit, 10);
+  assert.deepEqual(calls[0].options.filters, filters);
+  assert.equal(result.results[0].matchStart, 42);
+  assert.deepEqual(result.results[0].snippetParts, [
+    { text: 'prima ', highlighted: false },
+    { text: 'parola', highlighted: true },
+    { text: ' dopo', highlighted: false },
+  ]);
+});
+
+test('search:facets espone gruppi e speaker e gestisce l’indice assente', () => {
+  const facets = createSearchFacetsHandler({
+    getIndex: () => ({
+      facets: () => ({ folders: ['Università', ''], speakers: ['Mario'] }),
+    }),
+  });
+  assert.deepEqual(facets(), {
+    success: true,
+    folders: ['Università', ''],
+    speakers: ['Mario'],
+  });
+
+  const unavailable = createSearchFacetsHandler({ getIndex: () => null });
+  const result = unavailable();
+  assert.equal(result.success, false);
+  assert.equal(result.code, 'index-unavailable');
 });

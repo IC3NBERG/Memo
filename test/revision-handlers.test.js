@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
+  createEditsResetHandler,
   createEditsSaveHandler,
   createRevisionCreateHandler,
   createRevisionListHandler,
@@ -116,6 +117,43 @@ test('edits:save applica l’overlay con controllo di concorrenza', () => {
     });
     assert.equal(conflict.success, false);
     assert.equal(conflict.code, 'edit-revision-mismatch');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('edits:reset azzera overlay e rifiuta percorsi fuori archivio', () => {
+  const root = tempDir();
+  try {
+    const { recDir, pathGuard } = setup(root);
+    addRevision(recDir, 'testo originale');
+    const reset = createEditsResetHandler({ pathGuard, store: transcriptStore });
+
+    const view = transcriptStore.readActiveTranscript(recDir).transcript;
+    const saved = transcriptStore.saveEdits(recDir, {
+      ...view.edits,
+      segmentText: { 'r1-s0001': 'testo corretto' },
+      tags: { 'r1-s0001': ['importante'] },
+      legacyDocumentText: 'testo legacy',
+    });
+    assert.equal(saved.success, true);
+
+    const result = reset({ recDir });
+    assert.equal(result.success, true);
+    assert.equal(result.changed, true);
+    assert.equal(result.transcript.text, 'testo originale');
+    assert.equal(result.transcript.legacyText, null);
+    assert.equal(result.edits.editRevision, saved.edits.editRevision + 1);
+    assert.deepEqual(result.edits.tags, {});
+
+    const again = reset({ recDir });
+    assert.equal(again.success, true);
+    assert.equal(again.changed, false);
+
+    assert.deepEqual(reset({ recDir: path.join(root, 'fuori') }), {
+      success: false,
+      error: 'Registrazione non valida',
+    });
   } finally {
     cleanup(root);
   }

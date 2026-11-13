@@ -10,6 +10,7 @@ const {
 } = require('../storage/atomic');
 const { isSafeFolderName } = require('../storage/path-guard');
 const { createMetadataForNewRecording } = require('../transcript/store');
+const { writeManifest } = require('./manifest');
 
 const FALLBACK_RECORDING_NAME = 'Lezione';
 const TIMESTAMP_PAD = (value) => String(value).padStart(2, '0');
@@ -82,6 +83,7 @@ function createRecording({
       folder: folder || null,
     });
     writeJsonAtomicSync(path.join(recDir, 'metadata.json'), metadata);
+    writeManifest(recDir);
 
     return { success: true, recDir, audioPath };
   } catch (err) {

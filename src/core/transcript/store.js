@@ -5,6 +5,9 @@ const fs = require('fs');
 const path = require('path');
 
 const { SCHEMA_VERSIONS } = require('./constants');
+const { describeCompatibility } = require('./compatibility');
+const { repairTranscriptDocument } = require('./repair');
+const { updateManifest } = require('../library/manifest');
 const {
   ensureDirSync,
   listDirectories,
@@ -46,6 +49,22 @@ function normalizeText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Un overlay è "vuoto" quando non contiene nessuna vista dell'utente:
+ * nessun testo corretto, blocco nascosto, tag, annotazione, ordine o gruppo.
+ * `revisionId`, `sourceHash` ed `editRevision` sono metadati, non contenuto.
+ */
+function hasOverlayContent(edits) {
+  if (!edits || typeof edits !== 'object') return false;
+  return Object.keys(edits.segmentText || {}).length > 0
+    || (Array.isArray(edits.hiddenSegmentIds) && edits.hiddenSegmentIds.length > 0)
+    || Object.keys(edits.tags || {}).length > 0
+    || Object.keys(edits.annotations || {}).length > 0
+    || Array.isArray(edits.order)
+    || (Array.isArray(edits.groups) && edits.groups.length > 0)
+    || typeof edits.legacyDocumentText === 'string';
+}
+
 function createMetadataForNewRecording({ name, date, folder }) {
   const timestamp = date instanceof Date ? date.toISOString() : nowIso();
   return {
@@ -69,9 +88,16 @@ function createMetadataForNewRecording({ name, date, folder }) {
 
 function updateMetadata(recDir, mutate) {
   const metadata = readMetadataStrict(recDir);
+  const compatibility = describeCompatibility('metadata', metadata.schemaVersion);
+  if (compatibility.action === 'read-only-future') {
+    const err = new Error(compatibility.message);
+    err.code = 'read-only-future';
+    throw err;
+  }
   const next = mutate({ ...metadata });
   next.updatedAt = nowIso();
   writeJsonAtomicSync(path.join(recDir, 'metadata.json'), next);
+  updateManifest(recDir, { changedPaths: ['metadata.json'] });
   return next;
 }
 
@@ -79,7 +105,7 @@ function revisionDir(recDir, revisionId) {
   return path.join(recDir, REVISIONS_DIR, revisionId);
 }
 
-function readRevisionDocuments(recDir, revisionId) {
+function readRevisionDocuments(recDir, revisionId, { allowFuture = false } = {}) {
   const dir = revisionDir(recDir, revisionId);
   const transcriptResult = readJsonSafe(path.join(dir, 'transcript.json'));
 
@@ -91,12 +117,48 @@ function readRevisionDocuments(recDir, revisionId) {
     };
   }
 
-  const transcriptValidation = validateTranscript(transcriptResult.value);
+  const rawVersion = Number(transcriptResult.value?.schemaVersion) || 1;
+  const transcriptCompatibility = describeCompatibility('transcript', rawVersion);
+
+  if (transcriptCompatibility.action === 'reject') {
+    return {
+      ok: false,
+      code: 'unsupported-schema',
+      error: transcriptCompatibility.message,
+      compatibility: transcriptCompatibility,
+    };
+  }
+
+  const futureTranscript = transcriptCompatibility.action === 'read-only-future';
+
+  const fallbackEnd = (transcriptResult.value?.segments || [])
+    .reduce((max, segment) => Math.max(max, Number(segment?.end) || 0), 0);
+
+  const repaired = repairTranscriptDocument(transcriptResult.value, revisionId, {
+    ignoreSchemaVersion: allowFuture || futureTranscript || rawVersion < SCHEMA_VERSIONS.transcript,
+    fallbackEnd,
+  });
+
+  if (!repaired.ok) {
+    return {
+      ok: false,
+      code: repaired.code || 'invalid-transcript',
+      error: (repaired.errors || []).join('; ') || 'Trascrizione non conforme',
+      compatibility: transcriptCompatibility,
+    };
+  }
+
+  const transcript = repaired.transcript;
+  const transcriptValidation = validateTranscript(transcript, {
+    ignoreSchemaVersion: allowFuture || futureTranscript,
+    expectedRevisionId: revisionId,
+  });
   if (!transcriptValidation.ok) {
     return {
       ok: false,
       code: 'invalid-transcript',
       error: transcriptValidation.errors.join('; '),
+      compatibility: transcriptCompatibility,
     };
   }
 
@@ -110,13 +172,16 @@ function readRevisionDocuments(recDir, revisionId) {
     editsStatus = editsResult.code === 'ENOENT' ? 'missing-edits' : 'invalid-edits';
     editsError = editsResult.error;
   } else {
-    const editsValidation = validateEdits(edits);
+    const editsValidation = validateEdits(edits, { ignoreSchemaVersion: allowFuture });
     if (!editsValidation.ok) {
       editsStatus = 'invalid-edits';
       editsError = editsValidation.errors.join('; ');
     } else if (edits.revisionId !== revisionId || edits.sourceHash !== sourceHash) {
       editsStatus = 'stale-edits';
       editsError = 'edits.json non corrisponde alla revisione o alla sorgente';
+    } else if (repaired.repaired) {
+      editsStatus = 'stale-edits';
+      editsError = 'Sorgente non conforme riparata in memoria: overlay non applicato';
     }
   }
 
@@ -126,11 +191,21 @@ function readRevisionDocuments(recDir, revisionId) {
 
   return {
     ok: true,
-    transcript: transcriptResult.value,
+    transcript,
     edits,
     sourceHash,
     editsStatus,
     editsError,
+    warnings: [
+      ...(repaired.warnings || []),
+      ...(transcriptValidation.warnings || []).map((message) => ({
+        code: 'transcript-warning',
+        message,
+      })),
+    ],
+    repaired: !!repaired.repaired,
+    readOnly: allowFuture || futureTranscript,
+    compatibility: transcriptCompatibility,
   };
 }
 
@@ -139,23 +214,26 @@ function writeDerived(recDir, transcript, edits) {
   writeJsonAtomicSync(path.join(recDir, 'transcript.edits.json'), edits);
   const projected = projectTranscript(transcript, edits);
   writeTextAtomicSync(path.join(recDir, 'transcript.txt'), projected.text);
+  updateManifest(recDir, {
+    changedPaths: ['transcript.json', 'transcript.edits.json', 'transcript.txt'],
+  });
 }
 
 function refreshDerived(recDir, metadata) {
   if (!metadata?.activeRevisionId) return;
   const documents = readRevisionDocuments(recDir, metadata.activeRevisionId);
-  if (!documents.ok) return;
+  if (!documents.ok || documents.readOnly || documents.repaired) return;
   writeDerived(recDir, documents.transcript, documents.edits);
 }
 
-function buildView(transcript, edits, editsStatus = 'ok') {
+function buildView(transcript, edits, editsStatus = 'ok', extra = {}) {
   const projected = projectTranscript(transcript, edits);
   return {
     segments: projected.segments,
     text: projected.text,
     legacyDocumentText: projected.legacyDocumentText,
     legacyText: typeof edits?.legacyDocumentText === 'string' ? edits.legacyDocumentText : null,
-    warnings: projected.warnings,
+    warnings: [...(extra.warnings || []), ...projected.warnings],
     revisionId: transcript.revisionId,
     kind: transcript.kind,
     timing: transcript.source?.timing || 'segment',
@@ -163,6 +241,9 @@ function buildView(transcript, edits, editsStatus = 'ok') {
     sourceSegments: transcript.segments,
     edits,
     editsStatus,
+    readOnly: !!extra.readOnly,
+    repaired: !!extra.repaired,
+    compatibility: extra.compatibility || null,
   };
 }
 
@@ -188,7 +269,8 @@ function cleanupOrphanStaging(recDir, { maxAgeMs = 60 * 60 * 1000 } = {}) {
 
 function readActiveTranscript(recDir) {
   cleanupOrphanStaging(recDir);
-  const { metadata } = ensureRecordingMigrated(recDir);
+  const migration = ensureRecordingMigrated(recDir);
+  const { metadata } = migration;
 
   if (!metadata.activeRevisionId) {
     return {
@@ -196,32 +278,47 @@ function readActiveTranscript(recDir) {
       code: 'no-transcript',
       error: 'Nessuna trascrizione',
       metadata,
+      readOnly: !!migration.readOnly,
     };
   }
 
-  const documents = readRevisionDocuments(recDir, metadata.activeRevisionId);
+  const documents = readRevisionDocuments(recDir, metadata.activeRevisionId, {
+    allowFuture: !!migration.readOnly,
+  });
   if (!documents.ok) {
     return {
       success: false,
       code: documents.code,
       error: documents.error || 'Trascrizione non leggibile',
       metadata,
+      revisionId: metadata.activeRevisionId,
+      readOnly: !!migration.readOnly || !!documents.readOnly,
+      compatibility: documents.compatibility || migration.compatibility || null,
     };
   }
 
-  try {
-    refreshDerived(recDir, metadata);
-  } catch (_) {
-    // Le copie derivate sono rigenerabili: non bloccare l'apertura.
+  if (!migration.readOnly && !documents.readOnly && !documents.repaired) {
+    try {
+      refreshDerived(recDir, metadata);
+    } catch (_) {
+      // Le copie derivate sono rigenerabili: non bloccare l'apertura.
+    }
   }
 
   return {
     success: true,
-    transcript: buildView(documents.transcript, documents.edits, documents.editsStatus),
+    transcript: buildView(documents.transcript, documents.edits, documents.editsStatus, {
+      warnings: documents.warnings,
+      readOnly: !!migration.readOnly || !!documents.readOnly,
+      repaired: !!documents.repaired,
+      compatibility: documents.compatibility || migration.compatibility || null,
+    }),
     metadata,
     revisionId: metadata.activeRevisionId,
     kind: documents.transcript.kind,
     editsStatus: documents.editsStatus,
+    readOnly: !!migration.readOnly || !!documents.readOnly,
+    warnings: documents.warnings || [],
   };
 }
 
@@ -256,7 +353,15 @@ function createRevision(recDir, {
   text = '',
   edits: providedEdits = null,
 }) {
-  const { metadata } = ensureRecordingMigrated(recDir);
+  const migration = ensureRecordingMigrated(recDir);
+  if (migration.readOnly) {
+    return {
+      success: false,
+      code: 'read-only-future',
+      error: migration.compatibility?.message || 'Registrazione in sola lettura',
+    };
+  }
+  const { metadata } = migration;
   const revisionsDir = path.join(recDir, REVISIONS_DIR);
   ensureDirSync(revisionsDir);
 
@@ -358,7 +463,15 @@ function createRevision(recDir, {
 }
 
 function saveLegacyTranscript(recDir, { transcript, isLivePreview, isTranslated }) {
-  const { metadata } = ensureRecordingMigrated(recDir);
+  const migration = ensureRecordingMigrated(recDir);
+  if (migration.readOnly) {
+    return {
+      success: false,
+      code: 'read-only-future',
+      error: migration.compatibility?.message || 'Registrazione in sola lettura',
+    };
+  }
+  const { metadata } = migration;
   const incomingText = String(transcript?.text ?? '');
   const incomingSegments = Array.isArray(transcript?.segments) ? transcript.segments : [];
 
@@ -387,6 +500,13 @@ function saveLegacyTranscript(recDir, { transcript, isLivePreview, isTranslated 
       success: false,
       code: documents.code,
       error: documents.error || 'Trascrizione non leggibile',
+    };
+  }
+  if (documents.readOnly) {
+    return {
+      success: false,
+      code: 'read-only-future',
+      error: documents.compatibility?.message || 'Trascrizione in sola lettura',
     };
   }
 
@@ -443,7 +563,15 @@ function saveLegacyTranscript(recDir, { transcript, isLivePreview, isTranslated 
 }
 
 function saveEdits(recDir, nextEdits, { expectedEditRevision } = {}) {
-  const { metadata } = ensureRecordingMigrated(recDir);
+  const migration = ensureRecordingMigrated(recDir);
+  if (migration.readOnly) {
+    return {
+      success: false,
+      code: 'read-only-future',
+      error: migration.compatibility?.message || 'Registrazione in sola lettura',
+    };
+  }
+  const { metadata } = migration;
   if (!metadata.activeRevisionId) {
     return { success: false, code: 'no-transcript', error: 'Nessuna trascrizione attiva' };
   }
@@ -451,6 +579,13 @@ function saveEdits(recDir, nextEdits, { expectedEditRevision } = {}) {
   const documents = readRevisionDocuments(recDir, metadata.activeRevisionId);
   if (!documents.ok) {
     return { success: false, code: documents.code, error: documents.error };
+  }
+  if (documents.readOnly) {
+    return {
+      success: false,
+      code: 'read-only-future',
+      error: documents.compatibility?.message || 'Trascrizione in sola lettura',
+    };
   }
 
   if (expectedEditRevision !== undefined
@@ -520,8 +655,77 @@ function saveEdits(recDir, nextEdits, { expectedEditRevision } = {}) {
   };
 }
 
+/**
+ * Riporta la revisione attiva alla vista originale: azzera l'intero overlay
+ * (testo per segmento, nascosti, tag, annotazioni, ordine, gruppi e testo
+ * legacy) senza toccare la sorgente. Un overlay stale o invalido viene
+ * scartato e sostituito da uno vuoto allineato alla sorgente corrente.
+ */
+function resetOverlay(recDir) {
+  const migration = ensureRecordingMigrated(recDir);
+  if (migration.readOnly) {
+    return {
+      success: false,
+      code: 'read-only-future',
+      error: migration.compatibility?.message || 'Registrazione in sola lettura',
+    };
+  }
+  const { metadata } = migration;
+  if (!metadata.activeRevisionId) {
+    return { success: false, code: 'no-transcript', error: 'Nessuna trascrizione attiva' };
+  }
+
+  const documents = readRevisionDocuments(recDir, metadata.activeRevisionId);
+  if (!documents.ok) {
+    return { success: false, code: documents.code, error: documents.error };
+  }
+  if (documents.readOnly) {
+    return {
+      success: false,
+      code: 'read-only-future',
+      error: documents.compatibility?.message || 'Trascrizione in sola lettura',
+    };
+  }
+
+  const isEmpty = documents.editsStatus === 'ok' && !hasOverlayContent(documents.edits);
+  if (isEmpty) {
+    return {
+      success: true,
+      changed: false,
+      transcript: buildView(documents.transcript, documents.edits, documents.editsStatus),
+      edits: documents.edits,
+      revisionId: metadata.activeRevisionId,
+    };
+  }
+
+  const clean = emptyEdits(metadata.activeRevisionId, documents.sourceHash);
+  clean.editRevision = (documents.edits.editRevision || 0) + 1;
+
+  writeJsonAtomicSync(
+    path.join(revisionDir(recDir, metadata.activeRevisionId), 'edits.json'),
+    clean,
+  );
+  writeDerived(recDir, documents.transcript, clean);
+
+  return {
+    success: true,
+    changed: true,
+    transcript: buildView(documents.transcript, clean),
+    edits: clean,
+    revisionId: metadata.activeRevisionId,
+  };
+}
+
 function switchActiveRevision(recDir, revisionId) {
-  const { metadata } = ensureRecordingMigrated(recDir);
+  const migration = ensureRecordingMigrated(recDir);
+  if (migration.readOnly) {
+    return {
+      success: false,
+      code: 'read-only-future',
+      error: migration.compatibility?.message || 'Registrazione in sola lettura',
+    };
+  }
+  const { metadata } = migration;
   const entry = findRevisionEntry(metadata, revisionId);
   if (!entry) {
     return { success: false, code: 'revision-not-found', error: `Revisione ${revisionId} non trovata` };
@@ -530,6 +734,13 @@ function switchActiveRevision(recDir, revisionId) {
   const documents = readRevisionDocuments(recDir, revisionId);
   if (!documents.ok) {
     return { success: false, code: documents.code, error: documents.error };
+  }
+  if (documents.readOnly) {
+    return {
+      success: false,
+      code: 'read-only-future',
+      error: documents.compatibility?.message || 'Trascrizione in sola lettura',
+    };
   }
 
   const nextMetadata = updateMetadata(recDir, (draft) => {
@@ -574,6 +785,7 @@ module.exports = {
   readActiveTranscript,
   readMetadata,
   readRevisionDocuments,
+  resetOverlay,
   saveEdits,
   saveLegacyTranscript,
   switchActiveRevision,

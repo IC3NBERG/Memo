@@ -55,11 +55,13 @@ function normalizeSegments(rawSegments, revId, { fallbackEnd = 0 } = {}) {
     const start = Number.isFinite(rawStart) && rawStart >= 0 ? rawStart : 0;
     const end = Number.isFinite(rawEnd) && rawEnd >= 0 ? rawEnd : start;
     const text = String(raw.text ?? '').trim();
+    const speaker = typeof raw.speaker === 'string' ? raw.speaker.trim() : '';
 
     cleaned.push({
       start,
       end: Math.max(start, end),
       text,
+      speaker: speaker || null,
     });
   }
 
@@ -75,6 +77,7 @@ function normalizeSegments(rawSegments, revId, { fallbackEnd = 0 } = {}) {
     start: segment.start,
     end: segment.end || (index === selected.length - 1 ? fallbackEnd : segment.start),
     text: segment.text,
+    ...(segment.speaker ? { speaker: segment.speaker } : {}),
   }));
 }
 

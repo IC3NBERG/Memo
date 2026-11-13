@@ -49,7 +49,9 @@ test('updateMetadataFile cambia solo i campi richiesti', () => {
     assert.equal(onDisk.schemaVersion, 2);
     assert.equal(onDisk.activeRevisionId, 'r1');
     assert.deepEqual(onDisk.revisions, metadata.revisions);
-    assert.deepEqual(fs.readdirSync(rec), ['metadata.json']);
+    assert.deepEqual(fs.readdirSync(rec).sort(), ['manifest.json', 'metadata.json']);
+    const manifest = readJson(path.join(rec, 'manifest.json'));
+    assert.equal(manifest.files.some((file) => file.path === 'metadata.json'), true);
   } finally {
     cleanup(root);
   }

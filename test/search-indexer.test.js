@@ -37,6 +37,8 @@ function createRecording(root, folder = 'Università') {
     date: new Date('2025-06-07T08:00:00.000Z'),
     folder: folder || null,
   });
+  metadata.duration = 12;
+  metadata.speakers = ['Mario'];
   fs.writeFileSync(path.join(recDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
 
   transcriptStore.createRevision(recDir, {
@@ -50,7 +52,7 @@ function createRecording(root, folder = 'Università') {
       timing: 'segment',
     },
     segments: [
-      { start: 0, end: 3, text: 'La fotosintesi clorofilliana.' },
+      { start: 0, end: 3, text: 'La fotosintesi clorofilliana.', speaker: 'Mario' },
       { start: 3, end: 6, text: 'Il nucleo contiene il DNA.' },
     ],
   });
@@ -80,6 +82,20 @@ sqliteTest('indicizza la proiezione della revisione attiva, non i derivati', () 
     assert.equal(index.search('fotosintesi')[0].recId, recDir);
     assert.equal(index.search('biologia')[0].recId, recDir);
     assert.equal(index.search('universita')[0].recId, recDir);
+
+    const record = buildIndexRecord({ store: transcriptStore, recDir, recordingsDir });
+    assert.equal(record.startedAt, '2025-06-07T08:00:00.000Z');
+    assert.equal(record.duration, 12);
+    assert.deepEqual(record.speakers, ['Mario']);
+    assert.equal(record.segments.length, 2);
+    assert.equal(record.segments[0].speaker, 'Mario');
+
+    const matched = index.search('fotosintesi')[0];
+    assert.equal(matched.matchStart, 0);
+    assert.equal(matched.matchSpeaker, 'Mario');
+    assert.equal(index.search('fotosintesi', { filters: { speaker: 'Mario' } }).length, 1);
+    assert.equal(index.search('fotosintesi', { filters: { folder: 'Università' } }).length, 1);
+    assert.equal(index.search('fotosintesi', { filters: { durationMax: 60 } }).length, 1);
 
     // L'override dell'overlay cambia il testo effettivo indicizzato.
     const edits = transcriptStore.readActiveTranscript(recDir).transcript.edits;

@@ -81,13 +81,75 @@
           <input type="text" id="search-input" placeholder="Cerca registrazioni o note..." autocomplete="off" spellcheck="false" />
           <button id="btn-clear-search" class="btn-clear-search hidden" title="Cancella ricerca">✕</button>
         </div>
+        <div class="sidebar-search-tools">
+          <button id="btn-toggle-filters" class="btn-search-tool" title="Mostra i filtri di ricerca" aria-expanded="false" aria-controls="search-filters">
+            <span class="btn-icon" id="icon-filter-slot"></span>
+            <span>Filtri</span>
+            <span id="filter-count" class="filter-count hidden">0</span>
+          </button>
+          <button id="btn-rebuild-search" class="btn-search-tool btn-icon-only" title="Ricostruisci l'indice di ricerca dai file">
+            <span class="btn-icon" id="icon-rebuild-slot"></span>
+          </button>
+          <button id="btn-verify-archive" class="btn-search-tool btn-icon-only" title="Verifica integrità e manifest dell'archivio">
+            <span class="btn-icon" id="icon-verify-slot"></span>
+          </button>
+        </div>
+        <div id="search-filters" class="search-filters hidden">
+          <label class="filter-field">
+            <span>Gruppo</span>
+            <select id="filter-folder">
+              <option value="">Tutti i gruppi</option>
+            </select>
+          </label>
+          <div class="filter-row">
+            <label class="filter-field">
+              <span>Dal</span>
+              <input type="date" id="filter-date-from" />
+            </label>
+            <label class="filter-field">
+              <span>Al</span>
+              <input type="date" id="filter-date-to" />
+            </label>
+          </div>
+          <label class="filter-field">
+            <span>Durata</span>
+            <select id="filter-duration">
+              <option value="">Qualsiasi durata</option>
+              <option value="under5">Meno di 5 minuti</option>
+              <option value="5to20">5–20 minuti</option>
+              <option value="20to60">20–60 minuti</option>
+              <option value="over60">Oltre 60 minuti</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Speaker</span>
+            <select id="filter-speaker">
+              <option value="">Tutti gli speaker</option>
+            </select>
+          </label>
+          <div class="filter-actions">
+            <button id="btn-reset-filters" class="btn-filter-reset">Azzera filtri</button>
+          </div>
+        </div>
       </div>
 
       <div id="library-tree"></div>
 
       <div id="sidebar-footer">
         <div class="footer-row">
-          <span class="app-version" id="app-version-label">Crunch v1.2.0</span>
+          <span class="app-version" id="app-version-label" title="Versione di Crunch">v1.2.0</span>
+          <button id="btn-open-trash" class="btn-secondary btn-xs" title="Apri il cestino e ripristina una registrazione">
+            <span class="btn-icon" id="icon-trash-slot"></span>
+            <span>Cestino</span>
+          </button>
+          <button id="btn-privacy" class="btn-secondary btn-xs" title="Privacy, retention, export e blocco archivio">
+            <span class="btn-icon" id="icon-privacy-slot"></span>
+            <span>Privacy</span>
+          </button>
+          <button id="btn-diagnostics" class="btn-secondary btn-xs" title="Diagnostica, log e report">
+            <span class="btn-icon" id="icon-diagnostics-slot"></span>
+            <span>Diagnostica</span>
+          </button>
           <button id="btn-check-updates" class="btn-secondary btn-xs" title="Controlla aggiornamenti">
             <span class="btn-icon" id="icon-update-slot"></span>
             <span>Update</span>
@@ -221,6 +283,10 @@
                 <span>Timestamps</span>
               </span>
             </label>
+            <button id="btn-reset-view" class="btn-secondary" title="Ripristina la vista originale" disabled>
+              <span class="btn-icon" id="icon-reset-view-slot"></span>
+              <span>Ripristina</span>
+            </button>
             <button id="btn-copy-all" class="btn-secondary" title="Copia tutto il testo">
               <span class="btn-icon" id="icon-copy-slot"></span>
               <span>Copia</span>
@@ -413,6 +479,22 @@
     </div>
   </div>
 
+  <!-- Modal: integrità archivio / cestino -->
+  <div id="modal-archive" class="modal-overlay hidden">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <span class="modal-icon-header" id="modal-archive-icon-slot"></span>
+        <h3 id="archive-modal-title">Integrità archivio</h3>
+      </div>
+      <p id="archive-modal-intro"></p>
+      <div id="archive-modal-body" class="archive-modal-body"></div>
+      <div class="modal-actions archive-modal-actions">
+        <button id="btn-archive-secondary" class="btn-secondary hidden"></button>
+        <button id="btn-archive-close" class="btn-primary">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: salva nome registrazione -->
   <div id="modal-save-name" class="modal-overlay hidden">
     <div class="modal">
@@ -546,13 +628,234 @@
     </div>
   </div>
 
+  <!-- Modal: Privacy e dati -->
+  <div id="modal-privacy" class="modal-overlay hidden">
+    <div class="modal modal-info">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="modal-icon-header" id="modal-privacy-icon-slot"></span>
+          <div>
+            <h3>Privacy e dati</h3>
+            <span class="modal-subtitle">Conservazione, consenso, blocco e controllo dell’archivio locale</span>
+          </div>
+        </div>
+        <button id="btn-privacy-close" class="btn-modal-close" title="Chiudi (Esc)">✕</button>
+      </div>
+
+      <div class="modal-info-body">
+        <div class="info-section">
+          <div class="info-section-title">
+            <span class="info-sec-icon" id="privacy-retention-icon-slot"></span>
+            <h4>Conservazione e cancellazione</h4>
+          </div>
+          <div class="privacy-panel">
+            <div class="privacy-field-row">
+              <label class="privacy-field">
+                <span>Cestino: elimina definitivamente dopo</span>
+                <input type="number" id="privacy-trash-days" min="0" max="3650" step="1" />
+                <small>giorni · 0 = mai</small>
+              </label>
+              <label class="privacy-field">
+                <span>Registrazioni: sposta nel cestino dopo</span>
+                <input type="number" id="privacy-recordings-days" min="0" max="3650" step="1" />
+                <small>giorni · 0 = mai</small>
+              </label>
+            </div>
+            <p class="privacy-note">Le registrazioni più vecchie vengono prima spostate nel cestino e restano recuperabili fino alla scadenza del cestino. Nulla viene eliminato senza questa doppia soglia.</p>
+            <div class="privacy-actions">
+              <button id="btn-privacy-preview" class="btn-secondary btn-sm">Anteprima</button>
+              <button id="btn-privacy-apply" class="btn-primary btn-sm">Applica ora</button>
+              <span id="privacy-retention-result" class="privacy-result"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="info-section">
+          <div class="info-section-title">
+            <span class="info-sec-icon" id="privacy-voiceprint-icon-slot"></span>
+            <h4>Voiceprint e consenso</h4>
+          </div>
+          <div class="privacy-panel">
+            <label class="privacy-toggle">
+              <input type="checkbox" id="privacy-voiceprint-consent" />
+              <span>Acconsento al riconoscimento vocale persistente locale</span>
+            </label>
+            <p class="privacy-note">Le impronte vocali non sono ancora usate da nessuna funzione: questa preferenza registra il consenso per quando la funzione sarà disponibile. Il consenso è revocabile, vale solo su questo Mac e non viene inviato altrove. Revocandolo, le eventuali impronte dovranno essere cancellate dall’archivio voiceprint.</p>
+            <p id="privacy-voiceprint-state" class="privacy-result"></p>
+          </div>
+        </div>
+
+        <div class="info-section">
+          <div class="info-section-title">
+            <span class="info-sec-icon" id="privacy-lock-icon-slot"></span>
+            <h4>Macchine condivise</h4>
+          </div>
+          <div class="privacy-panel">
+            <p class="privacy-note">Il blocco copre l’interfaccia all’avvio e alla perdita di fuoco. Non cifra i file: per la riservatezza a riposo usa FileVault e un account macOS protetto.</p>
+            <div class="privacy-field-row">
+              <label class="privacy-field">
+                <span>Codice attuale (solo per modificarlo)</span>
+                <input type="password" id="privacy-lock-current" autocomplete="current-password" placeholder="Solo se già impostato" />
+              </label>
+              <label class="privacy-field">
+                <span>Codice di blocco</span>
+                <input type="password" id="privacy-lock-passcode" autocomplete="new-password" placeholder="Almeno 4 caratteri" />
+              </label>
+              <label class="privacy-field">
+                <span>Ripeti il codice</span>
+                <input type="password" id="privacy-lock-passcode-confirm" autocomplete="new-password" placeholder="Ripeti il codice" />
+              </label>
+            </div>
+            <div class="privacy-field-row">
+              <label class="privacy-field">
+                <span>Auto-lock dopo</span>
+                <input type="number" id="privacy-lock-minutes" min="1" max="120" step="1" />
+                <small>minuti di inattività</small>
+              </label>
+              <label class="privacy-toggle privacy-toggle-inline">
+                <input type="checkbox" id="privacy-lock-on-blur" />
+                <span>Blocca quando l’app perde il fuoco</span>
+              </label>
+            </div>
+            <div class="privacy-actions">
+              <button id="btn-privacy-lock-set" class="btn-primary btn-sm">Imposta codice</button>
+              <button id="btn-privacy-lock-disable" class="btn-secondary btn-sm">Rimuovi codice</button>
+              <button id="btn-privacy-lock-now" class="btn-secondary btn-sm">Blocca ora</button>
+              <span id="privacy-lock-state" class="privacy-result"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="info-section">
+          <div class="info-section-title">
+            <span class="info-sec-icon" id="privacy-archive-icon-slot"></span>
+            <h4>Archivio: export e cancellazione</h4>
+          </div>
+          <div class="privacy-panel">
+            <p id="privacy-stats" class="privacy-result"></p>
+            <label class="privacy-toggle">
+              <input type="checkbox" id="privacy-include-models" />
+              <span>Includi i modelli AI nell’export e nella cancellazione (~1,5 GB, riscaricabili)</span>
+            </label>
+            <div class="privacy-actions">
+              <button id="btn-privacy-export" class="btn-secondary btn-sm">
+                <span class="btn-icon" id="privacy-export-icon-slot"></span>
+                <span>Esporta archivio (.zip)</span>
+              </button>
+              <button id="btn-privacy-delete" class="btn-danger btn-sm">Elimina archivio…</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="info-section">
+          <div class="info-section-title">
+            <span class="info-sec-icon" id="privacy-uninstall-icon-slot"></span>
+            <h4>Cosa resta dopo la disinstallazione</h4>
+          </div>
+          <ul id="privacy-uninstall-list" class="privacy-list"></ul>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="btn-privacy-ok" class="btn-primary">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: conferma eliminazione archivio -->
+  <div id="modal-delete-archive" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-icon-header modal-icon-danger" id="modal-delete-icon-slot"></span>
+        <h3>Elimina l’intero archivio</h3>
+      </div>
+      <p>Verranno cancellati audio, trascrizioni, revisioni, cestino, indice e log. L’operazione non è reversibile. I modelli AI restano disponibili salvo tua scelta.</p>
+      <label class="privacy-field">
+        <span>Scrivi <strong>ELIMINA</strong> per confermare</span>
+        <input type="text" id="delete-archive-confirm" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="privacy-toggle">
+        <input type="checkbox" id="delete-archive-models" />
+        <span>Elimina anche i modelli AI</span>
+      </label>
+      <div class="modal-actions">
+        <button id="btn-delete-archive-cancel" class="btn-secondary">Annulla</button>
+        <button id="btn-delete-archive-confirm" class="btn-danger" disabled>Elimina archivio</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Diagnostica -->
+  <div id="modal-diagnostics" class="modal-overlay hidden">
+    <div class="modal modal-info">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="modal-icon-header" id="modal-diagnostics-icon-slot"></span>
+          <div>
+            <h3>Diagnostica</h3>
+            <span class="modal-subtitle">Stato dell’app, percorsi, archivio, integrità e log strutturati</span>
+          </div>
+        </div>
+        <button id="btn-diagnostics-close" class="btn-modal-close" title="Chiudi (Esc)">✕</button>
+      </div>
+      <div class="modal-info-body">
+        <div id="diagnostics-summary" class="diagnostics-grid"></div>
+        <label class="privacy-field diagnostics-level-field">
+          <span>Livello dei log</span>
+          <select id="diagnostics-level">
+            <option value="debug">debug — massimo dettaglio</option>
+            <option value="info">info — predefinito</option>
+            <option value="warn">warn — solo avvisi ed errori</option>
+            <option value="error">error — solo errori</option>
+          </select>
+        </label>
+        <div class="info-section">
+          <div class="info-section-title">
+            <span class="info-sec-icon" id="diagnostics-log-icon-slot"></span>
+            <h4>Ultimi eventi</h4>
+          </div>
+          <pre id="diagnostics-tail" class="diagnostics-tail"></pre>
+        </div>
+        <p class="privacy-note">Il report non contiene audio, nomi delle note, trascrizioni o contenuti personali. Include versioni, percorsi applicativi, metriche e gli ultimi eventi tecnici.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-diagnostics-open-logs" class="btn-secondary">Apri cartella log</button>
+        <button id="btn-diagnostics-refresh" class="btn-secondary">Aggiorna</button>
+        <button id="btn-diagnostics-copy" class="btn-primary">Copia report</button>
+        <button id="btn-diagnostics-ok" class="btn-secondary">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schermata di blocco -->
+  <div id="lock-screen" class="lock-screen hidden">
+    <div class="lock-card">
+      <span class="lock-icon" id="lock-icon-slot"></span>
+      <h2>Archivio bloccato</h2>
+      <p>Inserisci il codice per accedere alle registrazioni su questo Mac.</p>
+      <input type="password" id="lock-passcode" autocomplete="current-password" placeholder="Codice di blocco" />
+      <button id="btn-lock-unlock" class="btn-primary">Sblocca</button>
+      <span id="lock-error" class="lock-error"></span>
+    </div>
+  </div>
+
   <!-- Elemento audio nascosto per la riproduzione -->
   <audio id="hidden-audio"></audio>
 
   <!-- Script iconografico e logica applicativa -->
   <script src="icons.js"></script>
+  <script src="audio-sources.js"></script>
   <script src="audio-dsp.js"></script>
   <script src="block-model.js"></script>
+  <script src="recording.js"></script>
+  <script src="waveform.js"></script>
+  <script src="editor.js"></script>
+  <script src="transcription.js"></script>
+  <script src="archive.js"></script>
+  <script src="library.js"></script>
+  <script src="modals.js"></script>
+  <script src="models.js"></script>
+  <script src="privacy.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

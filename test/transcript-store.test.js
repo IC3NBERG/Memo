@@ -10,6 +10,7 @@ const {
   createRevision,
   listRevisions,
   readActiveTranscript,
+  resetOverlay,
   saveEdits,
   saveLegacyTranscript,
   switchActiveRevision,
@@ -189,6 +190,94 @@ test('salva overlay per segmento e rileva edits stale', () => {
     assert.equal(stale.success, true);
     assert.equal(stale.editsStatus, 'stale-edits');
     assert.equal(stale.transcript.text, 'manomesso fuori dall’app due');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('resetOverlay azzera l’intero overlay senza toccare la sorgente', () => {
+  const root = tempDir();
+  try {
+    const rec = createRecording(root);
+    createRevision(rec, {
+      kind: 'transcription',
+      source: { engine: 'whisper-cli', model: null, language: 'it', complete: true },
+      segments: [
+        { start: 0, end: 5, text: 'uno' },
+        { start: 5, end: 10, text: 'due' },
+      ],
+    });
+
+    const sourcePath = path.join(rec, '.revisions', 'r1', 'transcript.json');
+    const sourceBefore = sha256File(sourcePath);
+
+    saveEdits(rec, {
+      segmentText: { 'r1-s0001': 'uno corretto' },
+      hiddenSegmentIds: ['r1-s0002'],
+      tags: { 'r1-s0001': ['importante'] },
+      annotations: { 'r1-s0001': [{ id: 'a1', text: 'nota', createdAt: '2025-01-01T00:00:00.000Z' }] },
+      order: ['r1-s0002', 'r1-s0001'],
+      groups: [{ id: 'g1', title: 'Gruppo', segmentIds: ['r1-s0001'] }],
+      legacyDocumentText: 'testo del vecchio editor',
+    });
+
+    const before = readJson(path.join(rec, '.revisions', 'r1', 'edits.json'));
+    assert.equal(before.editRevision, 1);
+
+    const reset = resetOverlay(rec);
+    assert.equal(reset.success, true);
+    assert.equal(reset.changed, true);
+    assert.equal(reset.transcript.text, 'uno due');
+    assert.deepEqual(reset.transcript.segments.map((segment) => segment.id), [
+      'r1-s0001',
+      'r1-s0002',
+    ]);
+
+    const edits = readJson(path.join(rec, '.revisions', 'r1', 'edits.json'));
+    assert.equal(edits.editRevision, 2);
+    assert.deepEqual(edits.segmentText, {});
+    assert.deepEqual(edits.hiddenSegmentIds, []);
+    assert.deepEqual(edits.tags, {});
+    assert.deepEqual(edits.annotations, {});
+    assert.equal(edits.order, null);
+    assert.deepEqual(edits.groups, []);
+    assert.equal(edits.legacyDocumentText, undefined);
+    assert.equal(sha256File(sourcePath), sourceBefore);
+    assert.equal(fs.readFileSync(path.join(rec, 'transcript.txt'), 'utf8').trim(), 'uno due');
+
+    const again = resetOverlay(rec);
+    assert.equal(again.success, true);
+    assert.equal(again.changed, false);
+    assert.equal(readJson(path.join(rec, '.revisions', 'r1', 'edits.json')).editRevision, 2);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('resetOverlay scarta un overlay stale e lo riallinea alla sorgente', () => {
+  const root = tempDir();
+  try {
+    const rec = createRecording(root);
+    createRevision(rec, {
+      kind: 'transcription',
+      source: { engine: 'whisper-cli', model: null, language: 'it', complete: true },
+      segments: [{ start: 0, end: 5, text: 'originale' }],
+    });
+    saveEdits(rec, { segmentText: { 'r1-s0001': 'corretto' } });
+
+    const sourcePath = path.join(rec, '.revisions', 'r1', 'transcript.json');
+    const source = readJson(sourcePath);
+    source.segments[0].text = 'sorgente cambiata';
+    fs.writeFileSync(sourcePath, JSON.stringify(source, null, 2));
+
+    assert.equal(readActiveTranscript(rec).editsStatus, 'stale-edits');
+
+    const reset = resetOverlay(rec);
+    assert.equal(reset.success, true);
+    assert.equal(reset.changed, true);
+    assert.equal(reset.transcript.text, 'sorgente cambiata');
+    assert.equal(readActiveTranscript(rec).editsStatus, 'ok');
+    assert.equal(readJson(path.join(rec, '.revisions', 'r1', 'edits.json')).editRevision, 1);
   } finally {
     cleanup(root);
   }

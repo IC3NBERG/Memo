@@ -26,6 +26,11 @@
     "name": { "type": "string" },
     "date": { "type": ["string", "null"] },
     "folder": { "type": ["string", "null"] },
+    "speaker": { "type": ["string", "null"] },
+    "speakers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "duration": { "type": "number", "minimum": 0 },
     "hasTranscript": { "type": "boolean" },
     "isCompleteTranscript": { "type": "boolean" },

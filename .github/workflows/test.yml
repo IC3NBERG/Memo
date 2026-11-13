@@ -2,20 +2,44 @@ name: Test
 
 on:
   push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  unit:
+  lint:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Lint
+        run: node scripts/lint.mjs
+
+      - name: Revisione entitlements
+        run: node scripts/verify-entitlements.mjs
+
+  unit:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         # Node 20 è la versione inclusa in Electron 33; 24 è la più recente
-        # usata in sviluppo. I test non richiedono Electron.
+        # usata in sviluppo. La stessa suite gira sui tre sistemi supportati
+        # dalla promessa cross-platform, anche se la release è solo macOS.
+        os: [ubuntu-latest, macos-latest, windows-latest]
         node: [20, 24]
     steps:
       - name: Checkout code
@@ -28,16 +52,65 @@ jobs:
           cache: 'npm'
 
       # @electron/rebuild di electron-builder 25 usa node-gyp 9, che importa
-      # `distutils`: rimosso da Python 3.12. Il pacchetto setuptools fornisce
-      # lo shim necessario alla compilazione di better-sqlite3.
-      - name: Prepare Python for node-gyp
+      # `distutils`: rimosso da Python 3.12+.
+      - name: Prepare Python for node-gyp (Unix)
+        if: runner.os != 'Windows'
         run: python3 -m pip install --break-system-packages setuptools || python3 -m pip install setuptools
+
+      - name: Prepare Python for node-gyp (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pip install setuptools
 
       - name: Install dependencies
         run: npm ci
+        env:
+          PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
 
       - name: Run unit tests
         run: npm test
 
       - name: Run tests against the Electron ABI
         run: npm run test:electron
+
+  e2e:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Electron E2E
+        run: npm run test:e2e
+
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build app bundle
+        run: npm run build:dir
+
+      # Su PR la build non ha credenziali: lo smoke test verifica comunque
+      # primo avvio, struttura del bundle, entitlements e updater interno.
+      - name: Smoke test della build
+        run: bash scripts/smoke-release.sh dist/mac-arm64/Crunch.app

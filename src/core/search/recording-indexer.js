@@ -16,34 +16,85 @@ function folderFromPath(recDir, recordingsDir) {
   return parts[0] === '_unsorted' ? null : parts[0];
 }
 
+function normalizeDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function speakerNames(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap(speakerNames);
+  }
+  if (typeof value !== 'string') return [];
+  const speaker = value.trim();
+  return speaker ? [speaker] : [];
+}
+
+function collectSpeakers(metadata, segments) {
+  const speakers = new Set([
+    ...speakerNames(metadata?.speaker),
+    ...speakerNames(metadata?.speakers),
+  ]);
+  for (const segment of segments) {
+    for (const speaker of speakerNames(segment.speaker)) speakers.add(speaker);
+  }
+  return [...speakers].sort((a, b) => a.localeCompare(b, 'it'));
+}
+
 /**
  * Costruisce il documento indicizzato dalla revisione ATTIVA, non dalle copie
  * derivate. Se la registrazione non ha trascrizione resta comunque cercabile
- * per nome e gruppo.
+ * per nome, gruppo e metadati; i segmenti servono per saltare al punto audio.
  */
 function buildIndexRecord({ store, recDir, recordingsDir }) {
   const metadata = store.readMetadata(recDir);
   let body = '';
   let revisionId = metadata.activeRevisionId || null;
+  let segments = [];
 
   if (revisionId) {
     const result = store.readActiveTranscript(recDir);
     if (result.success && result.transcript) {
       body = String(result.transcript.text || '');
       revisionId = result.revisionId || revisionId;
+      segments = (Array.isArray(result.transcript.segments) ? result.transcript.segments : [])
+        .map((segment) => ({
+          start: Number.isFinite(Number(segment.start)) ? Number(segment.start) : 0,
+          end: Number.isFinite(Number(segment.end)) ? Number(segment.end) : 0,
+          text: String(segment.text ?? ''),
+          speaker: speakerNames(segment.speaker)[0] || null,
+        }));
     }
   }
 
   const name = String(metadata.name || path.basename(recDir));
   const folder = metadata.folder || folderFromPath(recDir, recordingsDir) || '';
   const updatedAt = metadata.updatedAt || null;
-  const contentHash = sha256(JSON.stringify([name, folder, body, revisionId, updatedAt]));
+  const startedAt = normalizeDate(metadata.date || metadata.createdAt);
+  const duration = Number.isFinite(Number(metadata.duration)) ? Number(metadata.duration) : 0;
+  const speakers = collectSpeakers(metadata, segments);
+  const contentHash = sha256(JSON.stringify([
+    name,
+    folder,
+    body,
+    revisionId,
+    updatedAt,
+    startedAt,
+    duration,
+    speakers,
+    segments.map((segment) => [segment.start, segment.end, segment.text, segment.speaker]),
+  ]));
 
   return {
     recId: path.resolve(recDir),
     name,
     folder,
     body,
+    startedAt,
+    duration,
+    speakers,
+    segments,
     updatedAt,
     revisionId,
     contentHash,
@@ -88,6 +139,7 @@ function syncRecordings({ index, store, recordingsDir, recDirs = [] }) {
 
 module.exports = {
   buildIndexRecord,
+  collectSpeakers,
   folderFromPath,
   indexRecording,
   removeRecording,

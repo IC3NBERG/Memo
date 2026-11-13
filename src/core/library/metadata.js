@@ -3,6 +3,9 @@
 const path = require('path');
 
 const { readJsonSafe, writeJsonAtomicSync } = require('../storage/atomic');
+const { SCHEMA_VERSIONS } = require('../transcript/constants');
+const { documentVersion } = require('../transcript/compatibility');
+const { updateManifest } = require('./manifest');
 
 function metadataPath(recDir) {
   return path.join(recDir, 'metadata.json');
@@ -25,11 +28,14 @@ function readMetadataFile(recDir) {
 function updateMetadataFile(recDir, mutate) {
   const current = readMetadataFile(recDir);
   if (!current || typeof current !== 'object' || Array.isArray(current)) return false;
+  // Una versione futura è in sola lettura: non riscriviamo nemmeno i campi noti.
+  if (documentVersion(current, 'metadata') > SCHEMA_VERSIONS.metadata) return false;
 
   const next = mutate({ ...current });
   if (!next || typeof next !== 'object' || Array.isArray(next)) return false;
 
   writeJsonAtomicSync(metadataPath(recDir), next);
+  updateManifest(recDir, { changedPaths: ['metadata.json'] });
   return true;
 }
 

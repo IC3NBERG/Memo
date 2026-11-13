@@ -19,6 +19,8 @@ const {
 const { normalizeSegments } = require('./ids');
 const { projectTranscript } = require('./projection');
 const { validateMetadata } = require('./validate');
+const { describeCompatibility, documentVersion } = require('./compatibility');
+const { writeManifest } = require('../library/manifest');
 
 const REVISIONS_DIR = '.revisions';
 const BACKUP_DIR = '.backup-v1';
@@ -84,45 +86,53 @@ function readV1Transcript(recDir, metadata) {
 
   if (jsonResult.ok) {
     const raw = jsonResult.value;
-    const rawSegments = Array.isArray(raw?.segments)
-      ? raw.segments
-      : (Array.isArray(raw?.transcription) ? raw.transcription : []);
-    let segments = normalizeSegments(rawSegments, 'r1', { fallbackEnd: duration });
-    let text = typeof raw?.text === 'string' ? raw.text.trim() : '';
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      warnings.push('invalid-transcript-json');
+    } else {
+      const rawSegments = Array.isArray(raw.segments)
+        ? raw.segments
+        : (Array.isArray(raw.transcription) ? raw.transcription : []);
+      let segments = normalizeSegments(rawSegments, 'r1', { fallbackEnd: duration });
+      let text = typeof raw.text === 'string' ? raw.text.trim() : '';
 
-    if (segments.length === 0 && text) {
-      segments = [{
-        id: 'r1-s0001',
-        start: 0,
-        end: duration,
-        text,
-      }];
-    }
+      if (!Array.isArray(raw.segments) && !Array.isArray(raw.transcription)
+          && rawSegments.length === 0 && (raw.segments !== undefined || raw.transcription !== undefined)) {
+        warnings.push('invalid-transcript-segments');
+      }
 
-    if (!text && segments.length > 0) {
-      text = segments.map((segment) => segment.text).join(' ').trim();
-    }
+      if (segments.length === 0 && text) {
+        segments = [{
+          id: 'r1-s0001',
+          start: 0,
+          end: duration,
+          text,
+        }];
+      }
 
-    if (segments.length > 0 || text) {
-      const kind = mapV1Kind(metadata);
-      const timing = kind === 'livePreview' || rawSegments.length === 0
-        ? 'whole-recording'
-        : 'segment';
-      const normalizedText = text.replace(/\s+/g, ' ').trim();
-      const joined = segments.map((segment) => segment.text).join(' ').replace(/\s+/g, ' ').trim();
-      const legacyDocumentText = normalizedText && joined && normalizedText !== joined
-        ? normalizedText
-        : null;
+      if (!text && segments.length > 0) {
+        text = segments.map((segment) => segment.text).join(' ').trim();
+      }
 
-      return {
-        segments,
-        text: normalizedText || joined,
-        kind,
-        timing,
-        format: rawSegments.length > 0 ? 'v1-json' : 'v1-json-text-only',
-        warnings,
-        legacyDocumentText,
-      };
+      if (segments.length > 0 || text) {
+        const kind = mapV1Kind(metadata);
+        const timing = kind === 'livePreview' ? 'whole-recording'
+          : (segments.length > 0 && rawSegments.length > 0 ? 'segment' : 'whole-recording');
+        const normalizedText = text.replace(/\s+/g, ' ').trim();
+        const joined = segments.map((segment) => segment.text).join(' ').replace(/\s+/g, ' ').trim();
+        const legacyDocumentText = normalizedText && joined && normalizedText !== joined
+          ? normalizedText
+          : null;
+
+        return {
+          segments,
+          text: normalizedText || joined,
+          kind,
+          timing,
+          format: rawSegments.length > 0 ? 'v1-json' : 'v1-json-text-only',
+          warnings,
+          legacyDocumentText,
+        };
+      }
     }
   } else if (jsonResult.code === 'INVALID_JSON') {
     warnings.push('invalid-transcript-json');
@@ -348,17 +358,83 @@ function commitMigration(recDir, built) {
   if (built.transcript) {
     writeDerived(recDir, built.transcript, built.edits);
   }
+
+  // Il manifest descrive l'archivio appena migrato, inclusa la copia di backup.
+  try {
+    writeManifest(recDir);
+  } catch (_) {
+    // Il manifest è un aiuto all'integrità, non un requisito per aprire i dati.
+  }
+}
+
+function revisionDirectoryExists(recDir, revisionId) {
+  const transcriptPath = path.join(recDir, REVISIONS_DIR, revisionId, 'transcript.json');
+  try {
+    return fs.statSync(transcriptPath).isFile();
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Un metadata v2 è il commit marker della migrazione: se punta a revisioni
+ * mancanti o non leggibili, lo stato è incoerente. Se esiste il backup v1 lo
+ * ripristiniamo e riproviamo; altrimenti rifiutiamo l'apertura senza scrivere.
+ */
+function committedStateProblem(recDir, metadata) {
+  if (metadata.activeRevisionId && !revisionDirectoryExists(recDir, metadata.activeRevisionId)) {
+    return `revisione attiva ${metadata.activeRevisionId} mancante`;
+  }
+  for (const entry of metadata.revisions || []) {
+    if (entry?.revisionId && !revisionDirectoryExists(recDir, entry.revisionId)) {
+      return `revisione ${entry.revisionId} mancante`;
+    }
+  }
+  if (metadata.hasTranscript && !metadata.activeRevisionId) {
+    return 'hasTranscript è true ma activeRevisionId è nullo';
+  }
+  return null;
+}
+
+function recoverBrokenCommittedState(recDir, problem) {
+  const backupDir = path.join(recDir, BACKUP_DIR);
+  if (!fs.existsSync(backupDir)) {
+    throw new MigrationError(
+      'incomplete-migration',
+      `Stato dell'archivio incoerente (${problem}) e backup v1 mancante: apertura rifiutata`,
+    );
+  }
+
+  recoverFromBackup(recDir);
+  return ensureRecordingMigrated(recDir);
 }
 
 function ensureRecordingMigrated(recDir) {
   const metadata = readMetadataStrict(recDir);
-  const version = Number(metadata.schemaVersion) || 1;
+  const version = documentVersion(metadata, 'metadata');
+  const compatibility = describeCompatibility('metadata', version);
 
-  if (version > SCHEMA_VERSIONS.metadata) {
-    throw new MigrationError(
-      'unsupported-schema',
-      `schemaVersion ${version} più nuovo di quello supportato (${SCHEMA_VERSIONS.metadata})`,
-    );
+  if (compatibility.action === 'read-only-future') {
+    // Nessun downgrade, nessuna migrazione. Se i campi noti restano validi
+    // possiamo mostrare la registrazione in sola lettura; altrimenti rifiutiamo.
+    const validation = validateMetadata(metadata, { ignoreSchemaVersion: true });
+    if (!validation.ok) {
+      throw new MigrationError(
+        'unsupported-schema',
+        `${compatibility.message} Struttura non leggibile: ${validation.errors.join('; ')}`,
+      );
+    }
+    return {
+      migrated: false,
+      metadata,
+      readOnly: true,
+      compatibility,
+      warnings: validation.warnings,
+    };
+  }
+
+  if (compatibility.action === 'reject') {
+    throw new MigrationError('unsupported-schema', compatibility.message);
   }
 
   if (version === SCHEMA_VERSIONS.metadata) {
@@ -369,7 +445,19 @@ function ensureRecordingMigrated(recDir) {
         `metadata v2 non valido: ${validation.errors.join('; ')}`,
       );
     }
-    return { migrated: false, metadata };
+
+    const problem = committedStateProblem(recDir, metadata);
+    if (problem) {
+      return recoverBrokenCommittedState(recDir, problem);
+    }
+
+    return {
+      migrated: false,
+      metadata,
+      readOnly: false,
+      compatibility,
+      warnings: validation.warnings,
+    };
   }
 
   if (version !== 1) {
@@ -387,7 +475,13 @@ function ensureRecordingMigrated(recDir) {
   const built = buildV2(recDir, metadata);
   commitMigration(recDir, built);
 
-  return { migrated: true, metadata: built.metadata };
+  return {
+    migrated: true,
+    metadata: built.metadata,
+    readOnly: false,
+    compatibility: describeCompatibility('metadata', built.metadata.schemaVersion),
+    warnings: [],
+  };
 }
 
 module.exports = {

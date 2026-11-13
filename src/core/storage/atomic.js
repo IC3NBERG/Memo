@@ -90,8 +90,16 @@ function sha256(data) {
   return `sha256:${crypto.createHash('sha256').update(data).digest('hex')}`;
 }
 
+function sha512(data) {
+  return `sha512:${crypto.createHash('sha512').update(data).digest('hex')}`;
+}
+
 function sha256Buffer(buffer) {
   return sha256(buffer);
+}
+
+function sha512Buffer(buffer) {
+  return sha512(buffer);
 }
 
 function sha256Json(value) {
@@ -100,6 +108,18 @@ function sha256Json(value) {
 
 function sha256File(file) {
   return sha256(fs.readFileSync(file));
+}
+
+function sha512File(file) {
+  return sha512(fs.readFileSync(file));
+}
+
+function fileDigests(file) {
+  const data = fs.readFileSync(file);
+  return {
+    sha256: sha256(data),
+    sha512: sha512(data),
+  };
 }
 
 function copyFileSync(src, dest) {
@@ -127,8 +147,11 @@ module.exports = {
   readJsonSafe,
   readJsonStrict,
   sha256Buffer,
+  sha512Buffer,
   sha256Json,
   sha256File,
+  sha512File,
+  fileDigests,
   copyFileSync,
   removeDirIfExists,
   listDirectories,

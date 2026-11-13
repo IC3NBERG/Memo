@@ -1,21 +1,34 @@
 {
   "name": "crunch",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Registrazione e trascrizione audio per lezioni universitarie con accelerazione Metal",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/*.test.js",
-    "test:unit": "node --test test/*.test.js",
-    "test:electron": "ELECTRON_RUN_AS_NODE=1 electron --test test/*.test.js",
-    "rebuild:native": "bash scripts/rebuild-native.sh",
-    "build": "npm run rebuild:native && electron-builder --mac",
-    "build:dir": "npm run rebuild:native && electron-builder --mac --dir",
+    "lint": "node scripts/lint.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "node scripts/run-tests.mjs",
+    "test:electron": "node scripts/run-tests.mjs --electron",
+    "test:e2e": "node scripts/run-tests.mjs --e2e",
+    "test:updater": "node --test test/updater.test.js test/entitlements.test.js",
+    "rebuild:native": "node scripts/rebuild-native.mjs",
+    "prebuild": "rm -rf dist/mac-arm64 dist/*.dmg dist/*.zip dist/*.blockmap",
+    "build": "npm run prebuild && npm run rebuild:native && electron-builder --mac && npm run postbuild",
+    "postbuild": "touch dist/.metadata_never_index",
+    "build:dir": "npm run prebuild && npm run rebuild:native && electron-builder --mac --dir && npm run postbuild",
+    "clean:installers": "rm -f dist/*.dmg dist/*.zip dist/*.blockmap",
+    "clean:dist": "rm -rf dist && mkdir -p dist && touch dist/.metadata_never_index",
     "build-whisper": "bash scripts/build-whisper.sh",
+    "smoke-release": "bash scripts/smoke-release.sh",
     "benchmark-live": "node scripts/benchmark-live.mjs",
     "verify-releases": "bash scripts/verify-releases.sh",
-    "install:app": "cp -R dist/mac-arm64/Crunch.app /Applications/ && echo 'Crunch installata con successo in /Applications/Crunch.app!'",
-    "postinstall": "bash scripts/rebuild-native.sh"
+    "verify-entitlements": "node scripts/verify-entitlements.mjs",
+    "release:check": "node scripts/release.mjs check",
+    "release:notes": "node scripts/release.mjs notes",
+    "release:prepare": "node scripts/release.mjs prepare",
+    "sign-update": "node scripts/sign-update.mjs",
+    "install:app": "rm -rf /Applications/Crunch.app && cp -R dist/mac-arm64/Crunch.app /Applications/ && echo 'Crunch installata con successo in /Applications/Crunch.app!'",
+    "postinstall": "node scripts/rebuild-native.mjs"
   },
   "repository": {
     "type": "git",
@@ -63,6 +76,11 @@
         }
       ],
       "icon": "assets/icons/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.inherit.plist",
+      "notarize": true,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Crunch ha bisogno del microfono per registrare le lezioni."
       }
