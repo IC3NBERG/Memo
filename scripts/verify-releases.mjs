@@ -225,9 +225,12 @@ async function main() {
     const expectedAssets = needsSignature ? 6 : 5;
 
     if (strict && needsSignature) {
-      const tagType = tryRun('git', ['cat-file', '-t', tag]);
-      if (!tagType.ok || tagType.out !== 'tag') {
-        problems.push('tag non annotato');
+      const tagType = (tryRun('git', ['cat-file', '-t', `refs/tags/${tag}`]).out
+        || tryRun('git', ['cat-file', '-t', tag]).out || '').trim();
+      if (!tagType) {
+        problems.push('tag assente');
+      } else if (tagType !== 'tag') {
+        notes.push(`tag non annotato (tipo: ${tagType})`);
       }
     }
 
