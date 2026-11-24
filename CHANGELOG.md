@@ -4,6 +4,18 @@ Tutte le modifiche rilevanti di Crunch. Il formato segue
 [Keep a Changelog](https://keepachangelog.com/it/1.1.0/) e il versioning
 [Semantic Versioning](https://semver.org/lang/it/).
 
+## [1.4.1] - 2026-11-24
+
+Release di perfezionamento dell'interfaccia utente v1.4. Rende il tema Crema e Salvia
+la base predefinita di sistema con contrasti rifiniti, allinea la gestione delle forme
+d'onda acustiche al canvas e risolve la contesa di quota dei runner macOS su GitHub Actions.
+
+### Modifiche
+- **interfaccia — tema base crema e salvia:** la combinazione calda Crema (#F5EFE6) e Verde Salvia (#5E7755 / #7C9271) diventa il tema base predefinito di sistema, con contrasti curati sui pulsanti primari in bianco puro, card squircle avorio e tonalità tostate per i testi.
+- **audio — waveform adattiva:** il canvas della forma d'onda del microfono adatta in tempo reale i gradienti di traccia e riempimento tra la modalità chiara e scura.
+- **dashboard — saluto editoriale:** saluto orario dinamico («Buongiorno/Buonasera, creativo.») nella panoramica studio ispirato alle guide editoriali.
+- **ci — ottimizzazione runner macOS:** esclusa la matrice ridondante su Node 20 per macos-latest nei test unitari per evitare stalli di coda e timeout sui runner GitHub Actions.
+
 ## [1.4.0] - 2026-11-13
 
 Riprogettazione completa dell'interfaccia grafica (UI/UX) e dell'iconografia per
