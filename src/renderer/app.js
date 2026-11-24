@@ -335,8 +335,14 @@ const UI = {
   waveformCanvas:      $('waveform-canvas'),
 
   playerControls:      $('player-controls'),
+  btnPlayerSkipBack:   $('btn-player-skip-back'),
+  iconPlayerSkipBackSlot: $('icon-player-skip-back-slot'),
   btnPlayPause:        $('btn-play-pause'),
   iconPlayerPlaySlot:  $('icon-player-play-slot'),
+  btnPlayerSkipForward:$('btn-player-skip-forward'),
+  iconPlayerSkipForwardSlot: $('icon-player-skip-forward-slot'),
+  btnPlayerSpeed:      $('btn-player-speed'),
+  playerSpeedLabel:    $('player-speed-label'),
   playerSeek:          $('player-seek'),
   playerTime:          $('player-time'),
   playerVolume:        $('player-volume'),
@@ -1319,6 +1325,42 @@ function setupTranscriptControls() {
 // ══════════════════════════════════════════════════════════════
 function setupPlayerControls() {
   const audio = state.playerAudio;
+
+  if (UI.iconPlayerSkipBackSlot && ICONS.rewind15) {
+    UI.iconPlayerSkipBackSlot.innerHTML = ICONS.rewind15;
+  }
+  if (UI.iconPlayerSkipForwardSlot && ICONS.forward15) {
+    UI.iconPlayerSkipForwardSlot.innerHTML = ICONS.forward15;
+  }
+
+  if (UI.btnPlayerSkipBack) {
+    UI.btnPlayerSkipBack.addEventListener('click', () => {
+      if (audio.duration) {
+        audio.currentTime = Math.max(0, audio.currentTime - 15);
+      }
+    });
+  }
+
+  if (UI.btnPlayerSkipForward) {
+    UI.btnPlayerSkipForward.addEventListener('click', () => {
+      if (audio.duration) {
+        audio.currentTime = Math.min(audio.duration, audio.currentTime + 15);
+      }
+    });
+  }
+
+  const speedSteps = [1.0, 1.25, 1.5, 2.0];
+  let currentSpeedIdx = 0;
+  if (UI.btnPlayerSpeed) {
+    UI.btnPlayerSpeed.addEventListener('click', () => {
+      currentSpeedIdx = (currentSpeedIdx + 1) % speedSteps.length;
+      const spd = speedSteps[currentSpeedIdx];
+      audio.playbackRate = spd;
+      if (UI.playerSpeedLabel) {
+        UI.playerSpeedLabel.textContent = `${spd.toFixed(spd % 1 === 0 ? 1 : 2)}×`;
+      }
+    });
+  }
 
   UI.btnPlayPause.addEventListener('click', () => {
     if (audio.paused) {

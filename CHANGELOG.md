@@ -4,6 +4,16 @@ Tutte le modifiche rilevanti di Crunch. Il formato segue
 [Keep a Changelog](https://keepachangelog.com/it/1.1.0/) e il versioning
 [Semantic Versioning](https://semver.org/lang/it/).
 
+## [1.4.2] - 2026-11-24
+
+Nuova UX e controlli audio riprogettati da zero per schermi desktop.
+Introduce nuovi tasti di trasporto audio dedicati (-15s riavvolgimento rapido, +15s avanzamento, selettore di velocità variabile 1.0×/1.25×/1.5×/2.0×), rifinitura tattile delle azioni di registrazione al centro e zero emoji con icone vettoriali ad alta definizione.
+
+### Novità
+- **interfaccia — nuovi tasti di trasporto audio:** aggiunti pulsanti dedicati di riavvolgimento (-15s) e avanzamento rapido (+15s), con indicatore e commutatore di velocità di ascolto (1.0×, 1.25×, 1.5×, 2.0×) con micro-transizioni fluide in tema salvia e crema.
+- **iconografia — nuove icone vettoriali:** integrate le nuove icone SVG `rewind15`, `forward15` e `speed`, rigorosamente senza emoji.
+- **ux studio — controlli registrazione tattili:** ridisegnati i controlli della vista registrazione al centro dello schermo con pulsanti a pillola tattile e stili visivi dedicati per Pausa e Termina e Salva.
+
 ## [1.4.1] - 2026-11-24
 
 Release di perfezionamento dell'interfaccia utente v1.4. Rende il tema Crema e Salvia

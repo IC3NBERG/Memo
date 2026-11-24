@@ -1,6 +1,6 @@
 {
   "name": "crunch",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Registrazione e trascrizione audio per lezioni universitarie con accelerazione Metal",
   "main": "src/main/main.js",
   "scripts": {

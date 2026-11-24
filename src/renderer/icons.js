@@ -63,7 +63,10 @@
     sun: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="memo-icon"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`,
     moon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="memo-icon"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>`,
     filter: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="memo-icon"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>`,
-    waveformLogo: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="memo-icon"><path d="M3 12h1"/><path d="M6 10v4"/><path d="M9 7v10"/><path d="M12 4v16"/><path d="M15 8v8"/><path d="M18 10v4"/><path d="M21 12h1"/></svg>`
+    waveformLogo: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="memo-icon"><path d="M3 12h1"/><path d="M6 10v4"/><path d="M9 7v10"/><path d="M12 4v16"/><path d="M15 8v8"/><path d="M18 10v4"/><path d="M21 12h1"/></svg>`,
+    rewind15: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="memo-icon"><path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/></svg>`,
+    forward15: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="memo-icon"><path d="M13 17l5-5-5-5"/><path d="M6 17l5-5-5-5"/></svg>`,
+    speed: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="memo-icon"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4v8z"/></svg>`
   };
 
   if (typeof window !== 'undefined') {
