@@ -33,10 +33,13 @@ function paintIdleWaveform() {
 
   ctx.clearRect(0, 0, W, H);
 
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark-warm';
+  const color = isDark ? 'rgba(156, 179, 143, 0.45)' : 'rgba(94, 119, 85, 0.4)';
+
   const grad = ctx.createLinearGradient(0, 0, W, 0);
-  grad.addColorStop(0, 'rgba(232, 168, 73, 0)');
-  grad.addColorStop(0.5, 'rgba(232, 168, 73, 0.34)');
-  grad.addColorStop(1, 'rgba(232, 168, 73, 0)');
+  grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  grad.addColorStop(0.5, color);
+  grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
   ctx.strokeStyle = grad;
   ctx.lineWidth = 1.5 * dpr;
@@ -102,19 +105,27 @@ function drawWaveform() {
     waveformY[i] = mid + v * mid * 0.78;
   }
 
-  if (!waveformFillGrad || waveformGradW !== W || waveformGradH !== H) {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark-warm';
+  const themeKey = isDark ? 'dark' : 'light';
+
+  if (!waveformFillGrad || waveformGradW !== W || waveformGradH !== H || waveformFillGrad._themeKey !== themeKey) {
     waveformGradW = W;
     waveformGradH = H;
 
+    const sage = isDark ? '#9CB38F' : '#5E7755';
+    const sageSoft = isDark ? 'rgba(156, 179, 143, 0.22)' : 'rgba(94, 119, 85, 0.20)';
+    const pine = isDark ? '#7C9271' : '#2B4B44';
+
     waveformFillGrad = ctx.createLinearGradient(0, 0, 0, H);
-    waveformFillGrad.addColorStop(0, 'rgba(232, 168, 73, 0.20)');
-    waveformFillGrad.addColorStop(0.5, 'rgba(232, 168, 73, 0.04)');
-    waveformFillGrad.addColorStop(1, 'rgba(232, 168, 73, 0.20)');
+    waveformFillGrad._themeKey = themeKey;
+    waveformFillGrad.addColorStop(0, sageSoft);
+    waveformFillGrad.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
+    waveformFillGrad.addColorStop(1, sageSoft);
 
     waveformLineGrad = ctx.createLinearGradient(0, 0, W, 0);
-    waveformLineGrad.addColorStop(0, '#D4723C');
-    waveformLineGrad.addColorStop(0.5, '#F3C476');
-    waveformLineGrad.addColorStop(1, '#D4723C');
+    waveformLineGrad.addColorStop(0, pine);
+    waveformLineGrad.addColorStop(0.5, sage);
+    waveformLineGrad.addColorStop(1, pine);
   }
 
   // Nastro simmetrico: dà corpo all'onda senza appesantirla.
@@ -129,7 +140,7 @@ function drawWaveform() {
   ctx.lineWidth = 1.8 * dpr;
   ctx.lineJoin = 'round';
   ctx.strokeStyle = waveformLineGrad;
-  ctx.shadowColor = 'rgba(232, 168, 73, 0.7)';
+  ctx.shadowColor = isDark ? 'rgba(156, 179, 143, 0.65)' : 'rgba(94, 119, 85, 0.45)';
   ctx.shadowBlur = 8 * dpr;
   ctx.beginPath();
   ctx.moveTo(waveformX[0], waveformY[0]);

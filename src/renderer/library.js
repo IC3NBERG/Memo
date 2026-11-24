@@ -133,6 +133,14 @@ function renderDashboard() {
   const totalDurationSec = allRecordings.reduce((sum, r) => sum + (r.duration || 0), 0);
   const totalFolders = (folders || []).length;
 
+  const greetingEl = document.getElementById('dashboard-greeting');
+  if (greetingEl) {
+    const hr = new Date().getHours();
+    if (hr >= 5 && hr < 12) greetingEl.textContent = 'Buongiorno, creativo.';
+    else if (hr >= 12 && hr < 18) greetingEl.textContent = 'Buon pomeriggio, creativo.';
+    else greetingEl.textContent = 'Buonasera, creativo.';
+  }
+
   const statNotesEl = document.getElementById('stat-total-notes');
   const statTimeEl = document.getElementById('stat-total-time');
   const statFoldersEl = document.getElementById('stat-total-folders');

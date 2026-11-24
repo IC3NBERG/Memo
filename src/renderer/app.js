@@ -532,25 +532,25 @@ function injectStaticIcons() {
 // ══════════════════════════════════════════════════════════════
 
 function applyTheme(theme) {
-  const current = theme === 'light-warm' ? 'light-warm' : 'dark-warm';
-  if (current === 'light-warm') {
-    document.documentElement.setAttribute('data-theme', 'light-warm');
+  const current = theme === 'dark-warm' ? 'dark-warm' : 'crema-salvia';
+  if (current === 'dark-warm') {
+    document.documentElement.setAttribute('data-theme', 'dark-warm');
   } else {
     document.documentElement.removeAttribute('data-theme');
   }
   try { localStorage.setItem('crunch-theme', current); } catch (_) {}
   if (UI.themeToggleIconSlot) {
-    UI.themeToggleIconSlot.innerHTML = current === 'light-warm' ? ICONS.moon : ICONS.sun;
+    UI.themeToggleIconSlot.innerHTML = current === 'dark-warm' ? ICONS.sun : ICONS.moon;
   }
 }
 
 function initTheme() {
-  let saved = 'dark-warm';
-  try { saved = localStorage.getItem('crunch-theme') || 'dark-warm'; } catch (_) {}
+  let saved = 'crema-salvia';
+  try { saved = localStorage.getItem('crunch-theme') || 'crema-salvia'; } catch (_) {}
   applyTheme(saved);
   UI.btnThemeToggle?.addEventListener('click', () => {
-    const isLight = document.documentElement.getAttribute('data-theme') === 'light-warm';
-    applyTheme(isLight ? 'dark-warm' : 'light-warm');
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark-warm';
+    applyTheme(isDark ? 'crema-salvia' : 'dark-warm');
   });
 }
 

@@ -45,6 +45,12 @@ jobs:
         # dalla promessa cross-platform, anche se la release è solo macOS.
         os: [ubuntu-latest, macos-latest, windows-latest]
         node: [20, 24]
+        exclude:
+          # Escludiamo macOS su Node 20 per evitare contese sulla quota
+          # di runner macOS ospitati su GitHub Actions (1 concorrente su free tier).
+          # macOS gira su Node 24 (allineato all'ambiente di build/release).
+          - os: macos-latest
+            node: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
